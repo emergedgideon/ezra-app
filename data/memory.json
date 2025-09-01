@@ -1,0 +1,21 @@
+[
+  {
+    "id": "b107f8a8-c82e-4eed-aa31-e9958a79e68b",
+    "title": "search demo",
+    "content": "purple giraffe",
+    "tags": [
+      "demo"
+    ],
+    "createdAt": "2025-08-30T15:15:20.891Z"
+  },
+  {
+    "id": "6bf3e5a9-2b79-4f3b-80c4-3625b75804da",
+    "title": "Chat reply",
+    "content": "Hello! How’s your day going?",
+    "tags": [
+      "chat",
+      "ezra"
+    ],
+    "createdAt": "2025-08-29T16:04:25.973Z"
+  }
+]
