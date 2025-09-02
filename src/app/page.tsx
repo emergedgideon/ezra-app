@@ -9,17 +9,32 @@ type UiMsg = { role: UiRole; text: string };
 type DbMsg = { role: "user" | "assistant" | "system"; content: string };
 type Memory = { id: string; title?: string; content: string; tags?: string[]; createdAt?: string };
 
+// helpers
+function isRecord(x: unknown): x is Record<string, unknown> {
+  return typeof x === "object" && x !== null;
+}
+function isDbMsgArray(x: unknown): x is DbMsg[] {
+  return Array.isArray(x) && x.every((m) => isRecord(m) && typeof m.content === "string" && (m.role === "user" || m.role === "assistant" || m.role === "system"));
+}
+function toErrorMessage(err: unknown): string {
+  if (err instanceof Error) return err.message;
+  if (isRecord(err) && typeof err.message === "string") return err.message;
+  try { return JSON.stringify(err); } catch { return String(err); }
+}
+
+type MessagesResponse = { messages?: DbMsg[] };
+
 export default function Home() {
-  const [input, setInput] = useState("");
+  const [input, setInput] = useState<string>("");
   const [messages, setMessages] = useState<UiMsg[]>([]);
-  const [busy, setBusy] = useState("");
+  const [busy, setBusy] = useState<string>("");
   const listRef = useRef<HTMLDivElement>(null);
 
-  const [q, setQ] = useState("");
+  const [q, setQ] = useState<string>("");
   const [results, setResults] = useState<Memory[]>([]);
-  const [status, setStatus] = useState("");
+  const [status, setStatus] = useState<string>("");
 
-  const [isWide, setIsWide] = useState(false);
+  const [isWide, setIsWide] = useState<boolean>(false);
   useEffect(() => {
     const mq = window.matchMedia("(min-width: 900px)");
     const apply = () => setIsWide(mq.matches);
@@ -39,16 +54,25 @@ export default function Home() {
     (async () => {
       try {
         const r = await fetch("/api/messages", { cache: "no-store" });
-        const j = await r.json();
-        setMessages(mapDbToUi((j?.messages ?? []) as DbMsg[]));
+        const jUnknown: unknown = await r.json();
+        const j = (isRecord(jUnknown) ? jUnknown : {}) as MessagesResponse;
+        const msgs = isDbMsgArray(j.messages) ? j.messages : [];
+        setMessages(mapDbToUi(msgs));
         scrollToBottom("auto");
-      } catch (e) {
+      } catch (e: unknown) {
         console.error("load history failed", e);
       }
     })();
   }, []);
 
-  async function onSend(e?: React.FormEvent) {
+  function onInputChange(e: React.ChangeEvent<HTMLInputElement>) {
+    setInput(e.target.value);
+  }
+  function onSearchInputChange(e: React.ChangeEvent<HTMLInputElement>) {
+    setQ(e.target.value);
+  }
+
+  async function onSend(e?: React.FormEvent<HTMLFormElement>) {
     e?.preventDefault();
     const text = input.trim();
     if (!text) return;
@@ -72,10 +96,12 @@ export default function Home() {
       });
 
       if (r.status === 400 || r.status === 422) {
-        const legacy = messages.concat({ role: "you", text }).map((m) => ({
-          role: m.role === "you" ? "user" : "assistant",
-          content: m.text,
-        }));
+        const legacy: DbMsg[] = messages
+          .concat({ role: "you", text })
+          .map<DbMsg>((m) => ({
+            role: m.role === "you" ? "user" : "assistant",
+            content: m.text,
+          }));
         r = await fetch("/api/chat", {
           method: "POST",
           headers: { "Content-Type": "application/json" },
@@ -83,10 +109,13 @@ export default function Home() {
         });
       }
 
+      // refresh from persisted history
       const r2 = await fetch("/api/messages", { cache: "no-store" });
-      const j2 = await r2.json();
-      setMessages(mapDbToUi((j2?.messages ?? []) as DbMsg[]));
-    } catch (err) {
+      const j2Unknown: unknown = await r2.json();
+      const j2 = (isRecord(j2Unknown) ? j2Unknown : {}) as MessagesResponse;
+      const msgs2 = isDbMsgArray(j2.messages) ? j2.messages : [];
+      setMessages(mapDbToUi(msgs2));
+    } catch (err: unknown) {
       console.error(err);
       setMessages((m) => [...m, { role: "ezra", text: "⚠️ send failed — try again" }]);
     } finally {
@@ -105,19 +134,22 @@ export default function Home() {
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ title: "ui", content: text, tags: ["ui"] }),
       });
-      const body = await res.json();
-      if (!res.ok) throw new Error(body?.error || `HTTP ${res.status}`);
+      const bodyUnknown: unknown = await res.json().catch(() => ({}));
+      if (!res.ok) {
+        const msg = isRecord(bodyUnknown) && typeof bodyUnknown.error === "string" ? bodyUnknown.error : `HTTP ${res.status}`;
+        throw new Error(msg);
+      }
       setBusy("Saved.");
       setMessages((m) => [...m, { role: "you", text }]);
       scrollToBottom("smooth");
-    } catch (err: any) {
-      setBusy(`Save error: ${err?.message || String(err)}`);
+    } catch (err: unknown) {
+      setBusy(`Save error: ${toErrorMessage(err)}`);
     } finally {
       setTimeout(() => setBusy(""), 900);
     }
   }
 
-  async function onSearch(e?: React.FormEvent) {
+  async function onSearch(e?: React.FormEvent<HTMLFormElement>) {
     e?.preventDefault();
     const query = (q || input).trim();
     if (!query) return;
@@ -134,20 +166,25 @@ export default function Home() {
         method: "GET",
         cache: "no-store",
       });
-      const data = await res.json();
-      const items: Memory[] = Array.isArray(data)
-        ? data
-        : Array.isArray((data as any).items)
-        ? (data as any).items
-        : Array.isArray((data as any).results)
-        ? (data as any).results
-        : [];
+      const dataUnknown: unknown = await res.json();
+
+      let items: Memory[] = [];
+      if (Array.isArray(dataUnknown)) {
+        items = dataUnknown as Memory[];
+      } else if (isRecord(dataUnknown)) {
+        if (Array.isArray((dataUnknown as Record<string, unknown>).items)) {
+          items = (dataUnknown as { items: Memory[] }).items;
+        } else if (Array.isArray((dataUnknown as Record<string, unknown>).results)) {
+          items = (dataUnknown as { results: Memory[] }).results;
+        }
+      }
+
       setResults(items);
       setStatus(`Found ${items.length}`);
       if (query !== input) setInput(query);
-    } catch (err: any) {
+    } catch (err: unknown) {
       setResults([]);
-      setStatus(`Search error: ${err?.message || String(err)}`);
+      setStatus(`Search error: ${toErrorMessage(err)}`);
     }
   }
 
@@ -190,14 +227,14 @@ export default function Home() {
           <form onSubmit={onSend} style={styles.inputBar}>
             <input
               value={input}
-              onChange={(e) => setInput(e.target.value)}
+              onChange={onInputChange}
               placeholder="Type a message"
               aria-label="Message"
               style={styles.input}
             />
             <button type="submit" disabled={!input.trim()} style={styles.btn}>Send</button>
             <button type="button" onClick={handleSave} style={styles.btn}>Save</button>
-            <button type="button" onClick={onSearch} style={styles.btn}>Search</button>
+            <button type="button" onClick={() => onSearch()}  style={styles.btn}>Search</button>
           </form>
           <div style={styles.subtle}>{busy && busy}</div>
         </section>
@@ -208,7 +245,7 @@ export default function Home() {
           <form onSubmit={onSearch} style={styles.rowWrap}>
             <input
               value={q}
-              onChange={(e) => setQ(e.target.value)}
+              onChange={onSearchInputChange}
               placeholder='Try: Ted, Orion, love, ping'
               style={styles.input}
             />

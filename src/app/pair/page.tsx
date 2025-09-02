@@ -4,7 +4,7 @@ import { useState } from "react";
 
 export default function PairPage() {
   const [code, setCode] = useState("");
-  const [result, setResult] = useState<any>(null);
+  const [result, setResult] = useState<Record<string, unknown> | null>(null);
   const [status, setStatus] = useState<string>("");
 
   async function redeem() {
@@ -72,3 +72,4 @@ export default function PairPage() {
     </div>
   );
 }
+

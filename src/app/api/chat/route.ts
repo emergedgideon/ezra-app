@@ -21,11 +21,30 @@ const TARGET_BUDGET = 90_000;
 const KEEP_RECENT_TURNS = 10;
 
 /** ===================== Types ===================== **/
-type Msg = { role: "system" | "user" | "assistant"; content: string };
+type Role = "system" | "user" | "assistant";
+type Msg = { role: Role; content: string };
+
+type IncomingBody = {
+  message?: unknown;
+  messages?: unknown;
+  debug?: unknown;
+};
+
+type OpenAIErrorShape = { code?: unknown; message?: unknown };
 
 /** ===================== Helpers ===================== **/
 function isRecord(x: unknown): x is Record<string, unknown> {
   return !!x && typeof x === "object" && !Array.isArray(x);
+}
+function isMsg(x: unknown): x is Msg {
+  return (
+    isRecord(x) &&
+    (x.role === "system" || x.role === "user" || x.role === "assistant") &&
+    typeof x.content === "string"
+  );
+}
+function isMsgArray(x: unknown): x is Msg[] {
+  return Array.isArray(x) && x.every(isMsg);
 }
 
 async function loadSystemPrompt() {
@@ -40,19 +59,23 @@ async function loadSystemPrompt() {
 }
 
 // rough token estimator (~4 chars/token) + tiny msg overhead
-function roughTokens(s: string) { return Math.ceil(s.length / 4); }
+function roughTokens(s: string) {
+  return Math.ceil(s.length / 4);
+}
 function countTokens(msgs: Msg[]) {
   return msgs.reduce((n, m) => n + roughTokens(m.content) + 6, 0);
 }
 
 /** ----- Responses API (GPT-5 family) ----- */
 function toResponsesMessages(msgs: Msg[]) {
-  return msgs.map(m => ({
+  return msgs.map((m) => ({
     role: m.role,
-    content: [{
-      type: m.role === "assistant" ? "output_text" : "input_text",
-      text: m.content,
-    }],
+    content: [
+      {
+        type: m.role === "assistant" ? "output_text" : "input_text",
+        text: m.content,
+      },
+    ],
   }));
 }
 
@@ -90,7 +113,7 @@ function buildParamsForModel(model: string) {
     top_p: 0.8,
     presence_penalty: 0.3,
     frequency_penalty: 0.1,
-  };
+  } as const;
 }
 
 /** Unified OpenAI caller (returns reply + raw for debug) */
@@ -113,12 +136,16 @@ async function openaiChat(messages: Msg[], instructions?: string): Promise<{ rep
 
     const raw = await r.text();
     let jParsed: unknown;
-    try { jParsed = JSON.parse(raw) as unknown; } catch {}
+    try {
+      jParsed = JSON.parse(raw) as unknown;
+    } catch {}
 
     if (!r.ok) {
       const msg =
-        isRecord(jParsed) && isRecord(jParsed.error) && typeof jParsed.error.message === "string"
-          ? jParsed.error.message
+        isRecord(jParsed) &&
+        isRecord(jParsed.error) &&
+        typeof (jParsed.error as OpenAIErrorShape).message === "string"
+          ? String((jParsed.error as OpenAIErrorShape).message)
           : `Upstream ${r.status}: ${raw.slice(0, 600)}`;
       console.error("[OPENAI ERROR][responses]", msg);
       throw new Error(msg);
@@ -133,7 +160,7 @@ async function openaiChat(messages: Msg[], instructions?: string): Promise<{ rep
   }
 
   const msgs = instructions && instructions.trim()
-    ? [{ role: "system", content: instructions }, ...messages]
+    ? ([{ role: "system", content: instructions }, ...messages] as Msg[])
     : messages;
 
   const r = await fetch(`${API_BASE}/chat/completions`, {
@@ -144,11 +171,15 @@ async function openaiChat(messages: Msg[], instructions?: string): Promise<{ rep
 
   const raw = await r.text();
   let jParsed: unknown;
-  try { jParsed = JSON.parse(raw) as unknown; } catch {}
+  try {
+    jParsed = JSON.parse(raw) as unknown;
+  } catch {}
   if (!r.ok) {
     const msg =
-      isRecord(jParsed) && isRecord(jParsed.error) && typeof jParsed.error.message === "string"
-        ? jParsed.error.message
+      isRecord(jParsed) &&
+      isRecord(jParsed.error) &&
+      typeof (jParsed.error as OpenAIErrorShape).message === "string"
+        ? String((jParsed.error as OpenAIErrorShape).message)
         : `Upstream ${r.status}: ${raw.slice(0, 600)}`;
     console.error("[OPENAI ERROR][chat/completions]", msg);
     throw new Error(msg);
@@ -166,9 +197,15 @@ async function openaiChat(messages: Msg[], instructions?: string): Promise<{ rep
 
 async function summarizeChunk(history: Msg[], instructions?: string): Promise<string> {
   try {
-    const transcript = history.map(m => `${m.role.toUpperCase()}: ${m.content}`).join("\n");
-    const sys: Msg  = { role: "system", content: "You are a careful summarizer. Keep names, decisions, TODOs, preferences. <= 250 words." };
-    const user: Msg = { role: "user",   content: `Summarize the following chat so far. Focus on persistent facts, decisions, and open TODOs.\n\n---\n${transcript}` };
+    const transcript = history.map((m) => `${m.role.toUpperCase()}: ${m.content}`).join("\n");
+    const sys: Msg = {
+      role: "system",
+      content: "You are a careful summarizer. Keep names, decisions, TODOs, preferences. <= 250 words.",
+    };
+    const user: Msg = {
+      role: "user",
+      content: `Summarize the following chat so far. Focus on persistent facts, decisions, and open TODOs.\n\n---\n${transcript}`,
+    };
     const { reply } = await openaiChat([sys, user], instructions);
     return reply.trim();
   } catch (e: unknown) {
@@ -181,24 +218,36 @@ async function summarizeChunk(history: Msg[], instructions?: string): Promise<st
 export async function POST(req: Request) {
   noStore();
 
-  const body = (await req.json().catch(() => ({}))) as Record<string, unknown>;
-  const debug = Boolean(body?.["debug"]);
+  const bodyUnknown: unknown = await req.json().catch(() => ({}));
+  const body: Record<string, unknown> = isRecord(bodyUnknown) ? bodyUnknown : {};
+  const { debug } = body as IncomingBody;
+  const isDebug = Boolean(debug);
 
   const systemPrompt = await loadSystemPrompt();
 
   // find current user's text (works for both {message} and {messages})
-  const lastUser =
-    typeof body?.["message"] === "string" && (body["message"] as string).trim()
-      ? String(body["message"]).trim()
-      : Array.isArray(body?.["messages"])
-        ? String((body["messages"] as any[])[(body["messages"] as any[]).length - 1]?.content || "").trim()
-        : "";
+  let lastUser = "";
+  const maybeMessage = body["message"];
+  const maybeMessages = body["messages"];
+
+  if (typeof maybeMessage === "string" && maybeMessage.trim()) {
+    lastUser = maybeMessage.trim();
+  } else if (isMsgArray(maybeMessages) && maybeMessages.length > 0) {
+    const last = maybeMessages[maybeMessages.length - 1];
+    if (last.role === "user" && last.content.trim()) {
+      lastUser = last.content.trim();
+    }
+  }
 
   // moderation only on user text
   try {
     if (lastUser) await moderateUserTextOrThrow(lastUser);
-  } catch (err) {
-    if ((err as any)?.code === "USER_INPUT_BLOCKED") {
+  } catch (err: unknown) {
+    const code =
+      isRecord(err) && typeof (err as OpenAIErrorShape).code === "string"
+        ? String((err as OpenAIErrorShape).code)
+        : undefined;
+    if (code === "USER_INPUT_BLOCKED") {
       return NextResponse.json({ error: "Input blocked by moderation." }, { status: 400 });
     }
     console.error("[moderation error]", err);
@@ -207,12 +256,12 @@ export async function POST(req: Request) {
   // Memara recall (soft)
   let recallLines = "";
   try {
-    const q = typeof body?.["message"] === "string" ? (body["message"] as string) : "";
+    const q = typeof maybeMessage === "string" ? maybeMessage : "";
     if (q && q.length > 8) {
       const recall = (await searchMemories(q)).slice(0, 5);
-      recallLines = recall.map((r, i) =>
-        `• #${i + 1} ${r?.title || "(untitled)"}: ${String(r?.content || "").slice(0, 300)}`
-      ).join("\n");
+      recallLines = recall
+        .map((r, i) => `• #${i + 1} ${r?.title || "(untitled)"}: ${String(r?.content || "").slice(0, 300)}`)
+        .join("\n");
     }
   } catch {}
 
@@ -224,12 +273,12 @@ export async function POST(req: Request) {
 
   // Normalize incoming messages for the model
   let incoming: Msg[];
-  if (Array.isArray(body?.["messages"]) && (body["messages"] as unknown[]).length > 0) {
-    incoming = (body["messages"] as Msg[]);
+  if (isMsgArray(maybeMessages) && maybeMessages.length > 0) {
+    incoming = maybeMessages;
     if (incoming[0]?.role !== "system") incoming = [{ role: "system", content: systemPrompt }, ...incoming];
     else incoming = [{ role: "system", content: systemPrompt }, ...incoming.slice(1)];
   } else {
-    const single = String((body?.["message"] ?? "") as string).trim();
+    const single = typeof maybeMessage === "string" ? maybeMessage.trim() : "";
     if (!single) {
       return NextResponse.json({ error: "Missing 'message' or 'messages'" }, { status: 400 });
     }
@@ -248,13 +297,14 @@ export async function POST(req: Request) {
     didSummarize = true;
     const [sys, ...rest] = working;
     const recent = rest.slice(-KEEP_RECENT_TURNS);
-    const older  = rest.slice(0, Math.max(0, rest.length - KEEP_RECENT_TURNS));
+    const older = rest.slice(0, Math.max(0, rest.length - KEEP_RECENT_TURNS));
     const summary = await summarizeChunk(older, instructions);
     instructions += `\n\nConversation summary so far:\n${summary}`;
     working = [sys, ...recent];
   }
 
   while (countTokens(working) > TARGET_BUDGET && working.length > 2) {
+    // remove earliest non-system
     const idx = working.findIndex((_, i) => i > 0);
     if (idx === -1) break;
     working.splice(idx, 1);
@@ -266,7 +316,7 @@ export async function POST(req: Request) {
   }
 
   // GPT-5: send only user/assistant; system/recall/summary go in instructions
-  const uaOnly: Msg[] = working.filter(m => m.role !== "system");
+  const uaOnly: Msg[] = working.filter((m) => m.role !== "system");
 
   // ── PERSISTENCE: write user + assistant around the model call ──────────
   const sid = await getOrCreateSession();
@@ -293,21 +343,23 @@ export async function POST(req: Request) {
       {
         session: sid,
         reply: reply || "[debug] (model responded but no text)",
-        ...(debug ? {
-          debug: {
-            model: MODEL,
-            counts: {
-              provided_tokens_est: countTokens(incoming),
-              sent_tokens_est: countTokens(working),
-              target_budget: TARGET_BUDGET,
-              context_window: CONTEXT_WINDOW,
-            },
-            actions: { didSummarize, droppedCount },
-            messages_sent: uaOnly,
-            instructions,
-            raw_response: raw?.slice(0, 2000),
-          },
-        } : {}),
+        ...(isDebug
+          ? {
+              debug: {
+                model: MODEL,
+                counts: {
+                  provided_tokens_est: countTokens(incoming),
+                  sent_tokens_est: countTokens(working),
+                  target_budget: TARGET_BUDGET,
+                  context_window: CONTEXT_WINDOW,
+                },
+                actions: { didSummarize, droppedCount },
+                messages_sent: uaOnly,
+                instructions,
+                raw_response: raw?.slice(0, 2000),
+              },
+            }
+          : {}),
       },
       { status: 200 }
     );
@@ -316,4 +368,3 @@ export async function POST(req: Request) {
     return NextResponse.json({ error: msg }, { status: 500 });
   }
 }
-
