@@ -290,7 +290,7 @@ export async function POST(req: Request) {
   // Memara recall (soft)
   let recallLines = "";
   try {
-    const q = typeof maybeMessage === "string" ? maybeMessage : "";
+    const q = lastUser;
     if (q && q.length > 8) {
       const recall = (await searchMemories(q)).slice(0, 5);
       recallLines = recall
