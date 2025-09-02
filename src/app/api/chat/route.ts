@@ -3,11 +3,17 @@ import { NextResponse } from "next/server";
 import fs from "fs/promises";
 import { searchMemories } from "@/lib/memory";
 import { unstable_noStore as noStore } from "next/cache";
+import { moderateUserTextOrThrow } from "@/lib/moderation";
+
+// NEW: persistence imports
+import { getOrCreateSession } from "@/lib/session";
+import { sql } from "@/lib/db";
+import { randomUUID } from "crypto";
 
 export const runtime = "nodejs";
 
 /** ===================== Config ===================== **/
-const MODEL = process.env.OPENAI_MODEL || "gpt-5-mini"; // "gpt-5" or "gpt-5-mini" use Responses API
+const MODEL = process.env.OPENAI_MODEL || "gpt-5-mini";
 const API_BASE = process.env.OPENAI_BASE_URL || "https://api.openai.com/v1";
 
 const CONTEXT_WINDOW = 128_000;
@@ -39,12 +45,10 @@ function countTokens(msgs: Msg[]) {
   return msgs.reduce((n, m) => n + roughTokens(m.content) + 6, 0);
 }
 
-/** ----- Responses API helpers (GPT-5 family) ----- */
-// Map roles to correct content types for the Responses API
+/** ----- Responses API (GPT-5 family) ----- */
 function toResponsesMessages(msgs: Msg[]) {
-  // we no longer send system turns to GPT-5; system content goes into `instructions`
   return msgs.map(m => ({
-    role: m.role, // "user" | "assistant"
+    role: m.role,
     content: [{
       type: m.role === "assistant" ? "output_text" : "input_text",
       text: m.content,
@@ -52,11 +56,8 @@ function toResponsesMessages(msgs: Msg[]) {
   }));
 }
 
-// Pull all output_text chunks (and surface refusals)
 function extractTextFromResponses(j: unknown): string {
   const parts: string[] = [];
-
-  // outputs: Array<{ content: Array<{type: string, text?: string}> }>
   const outputs = isRecord(j) && Array.isArray(j.output) ? (j.output as unknown[]) : [];
   for (const o of outputs) {
     const content = isRecord(o) && Array.isArray(o.content) ? (o.content as unknown[]) : [];
@@ -68,11 +69,28 @@ function extractTextFromResponses(j: unknown): string {
       }
     }
   }
-
   if (!parts.length && isRecord(j) && typeof j.output_text === "string" && j.output_text.trim()) {
     parts.push(j.output_text.trim());
   }
   return parts.join("\n\n").trim();
+}
+
+/** Build params: no sampling for gpt-5/mini; warm knobs for others */
+function buildParamsForModel(model: string) {
+  const is5 = model.startsWith("gpt-5");
+  const is5mini = model.startsWith("gpt-5-mini");
+
+  if (is5 || is5mini) {
+    return { model };
+  }
+
+  return {
+    model,
+    temperature: 0.9,
+    top_p: 0.8,
+    presence_penalty: 0.3,
+    frequency_penalty: 0.1,
+  };
 }
 
 /** Unified OpenAI caller (returns reply + raw for debug) */
@@ -80,12 +98,11 @@ async function openaiChat(messages: Msg[], instructions?: string): Promise<{ rep
   const key = process.env.OPENAI_API_KEY;
   if (!key) throw new Error("OPENAI_API_KEY missing");
 
-  if (MODEL.startsWith("gpt-5")) {
-    // GPT-5 / mini use Responses API; pass system+recall+summary via `instructions`
-    const body: Record<string, unknown> = {
-      model: MODEL,
-      input: toResponsesMessages(messages),
-    };
+  const params = buildParamsForModel(MODEL);
+  const is5Family = MODEL.startsWith("gpt-5");
+
+  if (is5Family) {
+    const body: Record<string, unknown> = { ...params, input: toResponsesMessages(messages) };
     if (instructions && instructions.trim()) body.instructions = instructions;
 
     const r = await fetch(`${API_BASE}/responses`, {
@@ -96,7 +113,7 @@ async function openaiChat(messages: Msg[], instructions?: string): Promise<{ rep
 
     const raw = await r.text();
     let jParsed: unknown;
-    try { jParsed = JSON.parse(raw) as unknown; } catch { jParsed = undefined; }
+    try { jParsed = JSON.parse(raw) as unknown; } catch {}
 
     if (!r.ok) {
       const msg =
@@ -115,7 +132,6 @@ async function openaiChat(messages: Msg[], instructions?: string): Promise<{ rep
     return { reply, raw };
   }
 
-  // Legacy non-GPT-5: Chat Completions; prepend system instructions as one system message
   const msgs = instructions && instructions.trim()
     ? [{ role: "system", content: instructions }, ...messages]
     : messages;
@@ -123,12 +139,12 @@ async function openaiChat(messages: Msg[], instructions?: string): Promise<{ rep
   const r = await fetch(`${API_BASE}/chat/completions`, {
     method: "POST",
     headers: { Authorization: `Bearer ${key}`, "Content-Type": "application/json" },
-    body: JSON.stringify({ model: MODEL, messages: msgs }),
+    body: JSON.stringify({ ...params, messages: msgs }),
   });
 
   const raw = await r.text();
   let jParsed: unknown;
-  try { jParsed = JSON.parse(raw) as unknown; } catch { jParsed = undefined; }
+  try { jParsed = JSON.parse(raw) as unknown; } catch {}
   if (!r.ok) {
     const msg =
       isRecord(jParsed) && isRecord(jParsed.error) && typeof jParsed.error.message === "string"
@@ -138,7 +154,6 @@ async function openaiChat(messages: Msg[], instructions?: string): Promise<{ rep
     throw new Error(msg);
   }
 
-  // Safely extract the reply without using `any`
   let reply = "";
   if (isRecord(jParsed) && Array.isArray(jParsed.choices)) {
     const first = jParsed.choices[0] as unknown;
@@ -146,7 +161,6 @@ async function openaiChat(messages: Msg[], instructions?: string): Promise<{ rep
       reply = first.message.content;
     }
   }
-
   return { reply, raw };
 }
 
@@ -155,62 +169,63 @@ async function summarizeChunk(history: Msg[], instructions?: string): Promise<st
     const transcript = history.map(m => `${m.role.toUpperCase()}: ${m.content}`).join("\n");
     const sys: Msg  = { role: "system", content: "You are a careful summarizer. Keep names, decisions, TODOs, preferences. <= 250 words." };
     const user: Msg = { role: "user",   content: `Summarize the following chat so far. Focus on persistent facts, decisions, and open TODOs.\n\n---\n${transcript}` };
-    const { reply } = await openaiChat([sys, user], instructions); // pass instructions so tone stays steady
+    const { reply } = await openaiChat([sys, user], instructions);
     return reply.trim();
   } catch (e: unknown) {
-    const msg = e instanceof Error ? e.message : String(e);
-    console.warn("[SUMMARY FALLBACK]", msg);
+    console.warn("[SUMMARY FALLBACK]", e);
     return "(summary temporarily unavailable)";
   }
 }
 
 /** ===================== Route ===================== **/
 export async function POST(req: Request) {
-  noStore(); // disable route caching
+  noStore();
 
   const body = (await req.json().catch(() => ({}))) as Record<string, unknown>;
-  const debug = Boolean((body as Record<string, unknown>)?.["debug"]);
+  const debug = Boolean(body?.["debug"]);
 
-  // Accept full history or single message
   const systemPrompt = await loadSystemPrompt();
 
-  // --- Memara recall (throttled) ---
+  // find current user's text (works for both {message} and {messages})
+  const lastUser =
+    typeof body?.["message"] === "string" && (body["message"] as string).trim()
+      ? String(body["message"]).trim()
+      : Array.isArray(body?.["messages"])
+        ? String((body["messages"] as any[])[(body["messages"] as any[]).length - 1]?.content || "").trim()
+        : "";
+
+  // moderation only on user text
+  try {
+    if (lastUser) await moderateUserTextOrThrow(lastUser);
+  } catch (err) {
+    if ((err as any)?.code === "USER_INPUT_BLOCKED") {
+      return NextResponse.json({ error: "Input blocked by moderation." }, { status: 400 });
+    }
+    console.error("[moderation error]", err);
+  }
+
+  // Memara recall (soft)
   let recallLines = "";
   try {
-    const lastUser =
-      typeof body?.["message"] === "string" && (body["message"] as string).trim()
-        ? String(body["message"]).trim()
-        : Array.isArray(body?.["messages"])
-          ? String(
-              (body["messages"] as unknown[])[(body["messages"] as unknown[]).length - 1] &&
-              (body["messages"] as Record<string, unknown>[])[(body["messages"] as unknown[]).length - 1].content
-            ).trim()
-          : "";
-
-    const q = lastUser;
+    const q = typeof body?.["message"] === "string" ? (body["message"] as string) : "";
     if (q && q.length > 8) {
-      const recall = (await searchMemories(q)).slice(0, 5); // call with one arg, enforce limit here
-      recallLines = recall
-        .map((r, i) => {
-          const title = r?.title || "(untitled)";
-          const content = String(r?.content || "").slice(0, 300);
-          return `• #${i + 1} ${title}: ${content}`;
-        })
-        .join("\n");
+      const recall = (await searchMemories(q)).slice(0, 5);
+      recallLines = recall.map((r, i) =>
+        `• #${i + 1} ${r?.title || "(untitled)"}: ${String(r?.content || "").slice(0, 300)}`
+      ).join("\n");
     }
   } catch {}
 
-  // Build combined INSTRUCTIONS (system + recall; we'll append summary later)
+  // Build instructions
   let instructions = systemPrompt;
   if (recallLines) {
     instructions += `\n\nRelevant memories (summaries, do not duplicate):\n${recallLines}`;
   }
 
-  // --- Normalize incoming ---
+  // Normalize incoming messages for the model
   let incoming: Msg[];
   if (Array.isArray(body?.["messages"]) && (body["messages"] as unknown[]).length > 0) {
     incoming = (body["messages"] as Msg[]);
-    // ensure there's at least a placeholder system at head so our logic stays consistent
     if (incoming[0]?.role !== "system") incoming = [{ role: "system", content: systemPrompt }, ...incoming];
     else incoming = [{ role: "system", content: systemPrompt }, ...incoming.slice(1)];
   } else {
@@ -224,7 +239,7 @@ export async function POST(req: Request) {
     ];
   }
 
-  // --- Context manager: summarize older, keep last N turns ---
+  // Manage context size
   let working: Msg[] = [...incoming];
   let didSummarize = false;
   let droppedCount = 0;
@@ -235,15 +250,11 @@ export async function POST(req: Request) {
     const recent = rest.slice(-KEEP_RECENT_TURNS);
     const older  = rest.slice(0, Math.max(0, rest.length - KEEP_RECENT_TURNS));
     const summary = await summarizeChunk(older, instructions);
-
-    // Move summary into instructions; keep only system header + recent turns
     instructions += `\n\nConversation summary so far:\n${summary}`;
     working = [sys, ...recent];
   }
 
-  // If still too big, drop oldest of recent until under budget
   while (countTokens(working) > TARGET_BUDGET && working.length > 2) {
-    // drop first non-system message
     const idx = working.findIndex((_, i) => i > 0);
     if (idx === -1) break;
     working.splice(idx, 1);
@@ -251,20 +262,36 @@ export async function POST(req: Request) {
   }
 
   if (countTokens(working) > CONTEXT_WINDOW) {
-    return NextResponse.json(
-      { error: "Context still too large after trimming." },
-      { status: 413 }
-    );
+    return NextResponse.json({ error: "Context still too large after trimming." }, { status: 413 });
   }
 
-  // For GPT-5 we send only user/assistant turns; system/recall/summary go via instructions
+  // GPT-5: send only user/assistant; system/recall/summary go in instructions
   const uaOnly: Msg[] = working.filter(m => m.role !== "system");
 
-  // --- Call model ---
+  // ── PERSISTENCE: write user + assistant around the model call ──────────
+  const sid = await getOrCreateSession();
+
+  // Write the user message (if present)
+  if (lastUser) {
+    await sql`
+      INSERT INTO messages (id, session_id, role, content)
+      VALUES (${randomUUID()}::uuid, ${sid}::uuid, 'user', ${lastUser})
+    `;
+  }
+
+  // Call the model
   try {
     const { reply, raw } = await openaiChat(uaOnly, instructions);
+
+    // Write the assistant reply
+    await sql`
+      INSERT INTO messages (id, session_id, role, content)
+      VALUES (${randomUUID()}::uuid, ${sid}::uuid, 'assistant', ${reply})
+    `;
+
     return NextResponse.json(
       {
+        session: sid,
         reply: reply || "[debug] (model responded but no text)",
         ...(debug ? {
           debug: {
@@ -276,8 +303,8 @@ export async function POST(req: Request) {
               context_window: CONTEXT_WINDOW,
             },
             actions: { didSummarize, droppedCount },
-            messages_sent: uaOnly,      // what we actually sent as history
-            instructions,               // full instructions string we sent
+            messages_sent: uaOnly,
+            instructions,
             raw_response: raw?.slice(0, 2000),
           },
         } : {}),
@@ -289,3 +316,4 @@ export async function POST(req: Request) {
     return NextResponse.json({ error: msg }, { status: 500 });
   }
 }
+
