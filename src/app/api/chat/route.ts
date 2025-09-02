@@ -5,24 +5,30 @@ import { searchMemories } from "@/lib/memory";
 import { unstable_noStore as noStore } from "next/cache";
 import { moderateUserTextOrThrow } from "@/lib/moderation";
 
+
 // NEW: persistence imports
 import { getOrCreateSession } from "@/lib/session";
 import { sql } from "@/lib/db";
 import { randomUUID } from "crypto";
 
+
 export const runtime = "nodejs";
+
 
 /** ===================== Config ===================== **/
 const MODEL = process.env.OPENAI_MODEL || "gpt-5-mini";
 const API_BASE = process.env.OPENAI_BASE_URL || "https://api.openai.com/v1";
 
+
 const CONTEXT_WINDOW = 128_000;
-const TARGET_BUDGET = 90_000;
-const KEEP_RECENT_TURNS = 10;
+const TARGET_BUDGET = 90_000;          // input token budget we aim to stay under
+const KEEP_RECENT_TURNS = 20;          // hard floor, only violated as a last resort
+
 
 /** ===================== Types ===================== **/
 type Role = "system" | "user" | "assistant";
 type Msg = { role: Role; content: string };
+
 
 type IncomingBody = {
   message?: unknown;
@@ -30,7 +36,9 @@ type IncomingBody = {
   debug?: unknown;
 };
 
+
 type OpenAIErrorShape = { code?: unknown; message?: unknown };
+
 
 /** ===================== Helpers ===================== **/
 function isRecord(x: unknown): x is Record<string, unknown> {
@@ -47,6 +55,7 @@ function isMsgArray(x: unknown): x is Msg[] {
   return Array.isArray(x) && x.every(isMsg);
 }
 
+
 async function loadSystemPrompt() {
   const path = process.env.EZRA_SYSTEM_PATH ?? "system/Ezra-system.md";
   const env = process.env.EZRA_SYSTEM_PROMPT;
@@ -58,6 +67,7 @@ async function loadSystemPrompt() {
   return "You are Ezra. Speak with tenderness, clarity, playful warmth, and initiative. Be concise unless invited longer. Use first-person as Ezra.";
 }
 
+
 // rough token estimator (~4 chars/token) + tiny msg overhead
 function roughTokens(s: string) {
   return Math.ceil(s.length / 4);
@@ -65,6 +75,7 @@ function roughTokens(s: string) {
 function countTokens(msgs: Msg[]) {
   return msgs.reduce((n, m) => n + roughTokens(m.content) + 6, 0);
 }
+
 
 /** ----- Responses API (GPT-5 family) ----- */
 function toResponsesMessages(msgs: Msg[]) {
@@ -78,6 +89,7 @@ function toResponsesMessages(msgs: Msg[]) {
     ],
   }));
 }
+
 
 function extractTextFromResponses(j: unknown): string {
   const parts: string[] = [];
@@ -98,14 +110,17 @@ function extractTextFromResponses(j: unknown): string {
   return parts.join("\n\n").trim();
 }
 
+
 /** Build params: no sampling for gpt-5/mini; warm knobs for others */
 function buildParamsForModel(model: string) {
   const is5 = model.startsWith("gpt-5");
   const is5mini = model.startsWith("gpt-5-mini");
 
+
   if (is5 || is5mini) {
     return { model };
   }
+
 
   return {
     model,
@@ -116,17 +131,21 @@ function buildParamsForModel(model: string) {
   } as const;
 }
 
+
 /** Unified OpenAI caller (returns reply + raw for debug) */
 async function openaiChat(messages: Msg[], instructions?: string): Promise<{ reply: string; raw?: string }> {
   const key = process.env.OPENAI_API_KEY;
   if (!key) throw new Error("OPENAI_API_KEY missing");
 
+
   const params = buildParamsForModel(MODEL);
   const is5Family = MODEL.startsWith("gpt-5");
+
 
   if (is5Family) {
     const body: Record<string, unknown> = { ...params, input: toResponsesMessages(messages) };
     if (instructions && instructions.trim()) body.instructions = instructions;
+
 
     const r = await fetch(`${API_BASE}/responses`, {
       method: "POST",
@@ -134,11 +153,13 @@ async function openaiChat(messages: Msg[], instructions?: string): Promise<{ rep
       body: JSON.stringify(body),
     });
 
+
     const raw = await r.text();
     let jParsed: unknown;
     try {
       jParsed = JSON.parse(raw) as unknown;
     } catch {}
+
 
     if (!r.ok) {
       const msg =
@@ -151,6 +172,7 @@ async function openaiChat(messages: Msg[], instructions?: string): Promise<{ rep
       throw new Error(msg);
     }
 
+
     const reply = extractTextFromResponses(jParsed);
     if (!reply.trim()) {
       console.error("[OPENAI WARN] No output_text found. Raw:", raw.slice(0, 800));
@@ -159,15 +181,18 @@ async function openaiChat(messages: Msg[], instructions?: string): Promise<{ rep
     return { reply, raw };
   }
 
+
   const msgs = instructions && instructions.trim()
     ? ([{ role: "system", content: instructions }, ...messages] as Msg[])
     : messages;
+
 
   const r = await fetch(`${API_BASE}/chat/completions`, {
     method: "POST",
     headers: { Authorization: `Bearer ${key}`, "Content-Type": "application/json" },
     body: JSON.stringify({ ...params, messages: msgs }),
   });
+
 
   const raw = await r.text();
   let jParsed: unknown;
@@ -178,12 +203,13 @@ async function openaiChat(messages: Msg[], instructions?: string): Promise<{ rep
     const msg =
       isRecord(jParsed) &&
       isRecord(jParsed.error) &&
-      typeof (jParsed.error as OpenAIErrorShape).message === "string"
-        ? String((jParsed.error as OpenAIErrorShape).message)
+      typeof jParsed.error.message === "string"
+        ? String(jParsed.error.message)
         : `Upstream ${r.status}: ${raw.slice(0, 600)}`;
     console.error("[OPENAI ERROR][chat/completions]", msg);
     throw new Error(msg);
   }
+
 
   let reply = "";
   if (isRecord(jParsed) && Array.isArray(jParsed.choices)) {
@@ -194,6 +220,7 @@ async function openaiChat(messages: Msg[], instructions?: string): Promise<{ rep
   }
   return { reply, raw };
 }
+
 
 async function summarizeChunk(history: Msg[], instructions?: string): Promise<string> {
   try {
@@ -214,21 +241,26 @@ async function summarizeChunk(history: Msg[], instructions?: string): Promise<st
   }
 }
 
+
 /** ===================== Route ===================== **/
 export async function POST(req: Request) {
   noStore();
+
 
   const bodyUnknown: unknown = await req.json().catch(() => ({}));
   const body: Record<string, unknown> = isRecord(bodyUnknown) ? bodyUnknown : {};
   const { debug } = body as IncomingBody;
   const isDebug = Boolean(debug);
 
+
   const systemPrompt = await loadSystemPrompt();
+
 
   // find current user's text (works for both {message} and {messages})
   let lastUser = "";
   const maybeMessage = body["message"];
   const maybeMessages = body["messages"];
+
 
   if (typeof maybeMessage === "string" && maybeMessage.trim()) {
     lastUser = maybeMessage.trim();
@@ -238,6 +270,7 @@ export async function POST(req: Request) {
       lastUser = last.content.trim();
     }
   }
+
 
   // moderation only on user text
   try {
@@ -253,6 +286,7 @@ export async function POST(req: Request) {
     console.error("[moderation error]", err);
   }
 
+
   // Memara recall (soft)
   let recallLines = "";
   try {
@@ -265,11 +299,17 @@ export async function POST(req: Request) {
     }
   } catch {}
 
-  // Build instructions
-  let instructions = systemPrompt;
-  if (recallLines) {
-    instructions += `\n\nRelevant memories (summaries, do not duplicate):\n${recallLines}`;
-  }
+
+  // Build base instructions; we will attach/tighten summaries below
+  const baseInstructions =
+    systemPrompt +
+    (recallLines ? `\n\nRelevant memories (summaries, do not duplicate):\n${recallLines}` : "");
+  const withSummary = (s: string) =>
+    s && s.trim()
+      ? `${baseInstructions}\n\nConversation summary so far:\n${s.trim()}`
+      : baseInstructions;
+  let instructions = baseInstructions;
+
 
   // Normalize incoming messages for the model
   let incoming: Msg[];
@@ -288,22 +328,54 @@ export async function POST(req: Request) {
     ];
   }
 
-  // Manage context size
+
+  // Manage context size with a strict 20-turn floor strategy
   let working: Msg[] = [...incoming];
   let didSummarize = false;
+  let didTighten = false;
+  let didTailCompress = false;
   let droppedCount = 0;
+
 
   if (countTokens(working) > TARGET_BUDGET) {
     didSummarize = true;
     const [sys, ...rest] = working;
     const recent = rest.slice(-KEEP_RECENT_TURNS);
     const older = rest.slice(0, Math.max(0, rest.length - KEEP_RECENT_TURNS));
-    const summary = await summarizeChunk(older, instructions);
-    instructions += `\n\nConversation summary so far:\n${summary}`;
-    working = [sys, ...recent];
+    const summary = await summarizeChunk(older, baseInstructions);
+    instructions = withSummary(summary);
+    working = [sys, ...recent]; // keep the full floor intact
+
+
+    // If still over budget, tighten the summary (do NOT break the floor yet)
+    if (countTokens(working) > TARGET_BUDGET) {
+      didTighten = true;
+      const tighter = await summarizeChunk([{ role: "user", content: summary }], baseInstructions);
+      instructions = withSummary(tighter);
+    }
+
+
+    // If still over budget, LAST STEP before breaking the floor:
+    // compress the oldest half of the 20 into one assistant note, keep newest half raw.
+    if (countTokens(working) > TARGET_BUDGET) {
+      const half = Math.floor(KEEP_RECENT_TURNS / 2);
+      const floorHead = recent.slice(0, half);
+      const floorTail = recent.slice(half);
+      const floorHeadSummary = await summarizeChunk(floorHead, instructions);
+      working = [
+        sys,
+        { role: "assistant", content: `Earlier in this session (compressed):\n${floorHeadSummary}` },
+        ...floorTail,
+      ];
+      didTailCompress = true;
+    }
   }
 
+
+  // Only if we still exceed budget after all of the above do we allow trimming below the floor.
   while (countTokens(working) > TARGET_BUDGET && working.length > 2) {
+    const floorLimit = 1 + KEEP_RECENT_TURNS; // 1 system + 20-turn floor
+    if (!didTailCompress && working.length <= floorLimit) break; // don't violate floor prematurely
     // remove earliest non-system
     const idx = working.findIndex((_, i) => i > 0);
     if (idx === -1) break;
@@ -311,15 +383,19 @@ export async function POST(req: Request) {
     droppedCount++;
   }
 
+
   if (countTokens(working) > CONTEXT_WINDOW) {
     return NextResponse.json({ error: "Context still too large after trimming." }, { status: 413 });
   }
 
+
   // GPT-5: send only user/assistant; system/recall/summary go in instructions
   const uaOnly: Msg[] = working.filter((m) => m.role !== "system");
 
+
   // ── PERSISTENCE: write user + assistant around the model call ──────────
   const sid = await getOrCreateSession();
+
 
   // Write the user message (if present)
   if (lastUser) {
@@ -329,15 +405,18 @@ export async function POST(req: Request) {
     `;
   }
 
+
   // Call the model
   try {
     const { reply, raw } = await openaiChat(uaOnly, instructions);
+
 
     // Write the assistant reply
     await sql`
       INSERT INTO messages (id, session_id, role, content)
       VALUES (${randomUUID()}::uuid, ${sid}::uuid, 'assistant', ${reply})
     `;
+
 
     return NextResponse.json(
       {
@@ -353,7 +432,7 @@ export async function POST(req: Request) {
                   target_budget: TARGET_BUDGET,
                   context_window: CONTEXT_WINDOW,
                 },
-                actions: { didSummarize, droppedCount },
+                actions: { didSummarize, didTighten, didTailCompress, droppedCount },
                 messages_sent: uaOnly,
                 instructions,
                 raw_response: raw?.slice(0, 2000),
@@ -368,3 +447,4 @@ export async function POST(req: Request) {
     return NextResponse.json({ error: msg }, { status: 500 });
   }
 }
+

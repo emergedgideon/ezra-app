@@ -1,13 +1,17 @@
 // src/app/page.tsx
 "use client";
 
+
 import { useEffect, useRef, useState } from "react";
+
 
 type UiRole = "you" | "ezra";
 type UiMsg = { role: UiRole; text: string };
 
+
 type DbMsg = { role: "user" | "assistant" | "system"; content: string };
 type Memory = { id: string; title?: string; content: string; tags?: string[]; createdAt?: string };
+
 
 // helpers
 function isRecord(x: unknown): x is Record<string, unknown> {
@@ -22,7 +26,9 @@ function toErrorMessage(err: unknown): string {
   try { return JSON.stringify(err); } catch { return String(err); }
 }
 
+
 type MessagesResponse = { messages?: DbMsg[] };
+
 
 export default function Home() {
   const [input, setInput] = useState<string>("");
@@ -30,9 +36,11 @@ export default function Home() {
   const [busy, setBusy] = useState<string>("");
   const listRef = useRef<HTMLDivElement>(null);
 
+
   const [q, setQ] = useState<string>("");
   const [results, setResults] = useState<Memory[]>([]);
   const [status, setStatus] = useState<string>("");
+
 
   const [isWide, setIsWide] = useState<boolean>(false);
   useEffect(() => {
@@ -43,12 +51,14 @@ export default function Home() {
     return () => mq.removeEventListener?.("change", apply);
   }, []);
 
+
   function mapDbToUi(db: DbMsg[]): UiMsg[] {
     return db.map((m) => ({ role: m.role === "user" ? "you" : "ezra", text: String(m.content ?? "") }));
   }
   function scrollToBottom(behavior: ScrollBehavior = "auto") {
     requestAnimationFrame(() => listRef.current?.scrollTo({ top: 1e9, behavior }));
   }
+
 
   useEffect(() => {
     (async () => {
@@ -65,6 +75,7 @@ export default function Home() {
     })();
   }, []);
 
+
   function onInputChange(e: React.ChangeEvent<HTMLInputElement>) {
     setInput(e.target.value);
   }
@@ -72,15 +83,18 @@ export default function Home() {
     setQ(e.target.value);
   }
 
+
   async function onSend(e?: React.FormEvent<HTMLFormElement>) {
     e?.preventDefault();
     const text = input.trim();
     if (!text) return;
 
+
     setMessages((m) => [...m, { role: "you", text }]);
     setInput("");
     setBusy("Thinking…");
     scrollToBottom("smooth");
+
 
     try {
       fetch("/api/ezra/notice", {
@@ -89,25 +103,21 @@ export default function Home() {
         body: JSON.stringify({ type: "chat", query: text, extra: { source: "home" } }),
       }).catch(() => {});
 
-      let r = await fetch("/api/chat", {
+
+      // Build FULL history (UI → DbMsg) + the new user turn
+      const fullHistory: DbMsg[] = messages.map((m) => ({
+        role: m.role === "you" ? "user" : "assistant",
+        content: m.text,
+      }));
+      fullHistory.push({ role: "user", content: text });
+
+
+      await fetch("/api/chat", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ message: text }),
+        body: JSON.stringify({ messages: fullHistory }),
       });
 
-      if (r.status === 400 || r.status === 422) {
-        const legacy: DbMsg[] = messages
-          .concat({ role: "you", text })
-          .map<DbMsg>((m) => ({
-            role: m.role === "you" ? "user" : "assistant",
-            content: m.text,
-          }));
-        r = await fetch("/api/chat", {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ messages: legacy, debug: true }),
-        });
-      }
 
       // refresh from persisted history
       const r2 = await fetch("/api/messages", { cache: "no-store" });
@@ -123,6 +133,7 @@ export default function Home() {
       scrollToBottom("smooth");
     }
   }
+
 
   async function handleSave() {
     const text = (input || q).trim();
@@ -149,11 +160,13 @@ export default function Home() {
     }
   }
 
+
   async function onSearch(e?: React.FormEvent<HTMLFormElement>) {
     e?.preventDefault();
     const query = (q || input).trim();
     if (!query) return;
     setStatus("Searching…");
+
 
     fetch("/api/ezra/notice", {
       method: "POST",
@@ -161,12 +174,14 @@ export default function Home() {
       body: JSON.stringify({ type: "search", query, extra: { source: "home" } }),
     }).catch(() => {});
 
+
     try {
       const res = await fetch(`/api/memory/search?query=${encodeURIComponent(query)}&limit=10`, {
         method: "GET",
         cache: "no-store",
       });
       const dataUnknown: unknown = await res.json();
+
 
       let items: Memory[] = [];
       if (Array.isArray(dataUnknown)) {
@@ -179,6 +194,7 @@ export default function Home() {
         }
       }
 
+
       setResults(items);
       setStatus(`Found ${items.length}`);
       if (query !== input) setInput(query);
@@ -188,12 +204,14 @@ export default function Home() {
     }
   }
 
+
   return (
     <main style={styles.shell}>
       <header style={styles.header}>
         <div style={styles.brand}>Ezra</div>
         <a href="/pair" style={styles.pill}>Link this device</a>
       </header>
+
 
       <div style={{ ...styles.grid, gridTemplateColumns: isWide ? "1fr 1fr" : "1fr" }}>
         {/* Chat */}
@@ -224,6 +242,7 @@ export default function Home() {
             <div style={{ height: 12 }} />
           </div>
 
+
           <form onSubmit={onSend} style={styles.inputBar}>
             <input
               value={input}
@@ -238,6 +257,7 @@ export default function Home() {
           </form>
           <div style={styles.subtle}>{busy && busy}</div>
         </section>
+
 
         {/* Search */}
         <section style={styles.panel}>
@@ -256,6 +276,7 @@ export default function Home() {
           </small>
           <div style={styles.status}>{status}</div>
 
+
           <ul style={styles.results}>
             {results.map((m) => (
               <li key={m.id} style={styles.resultCard}>
@@ -270,6 +291,7 @@ export default function Home() {
     </main>
   );
 }
+
 
 const styles: Record<string, React.CSSProperties> = {
   shell: {
@@ -417,3 +439,4 @@ const styles: Record<string, React.CSSProperties> = {
   tags: { opacity: 0.7, fontSize: 12, marginTop: 6 },
   empty: { height: "100%", display: "grid", placeItems: "center", opacity: 0.6 },
 };
+
