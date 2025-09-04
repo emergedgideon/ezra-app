@@ -4,8 +4,9 @@ async function run() {
   try {
     const results = await searchMemories("purple giraffe");
     console.log("RESULTS:", results);
-  } catch (err: any) {
-    console.error("ERROR:", err.message);
+  } catch (err: unknown) {
+    const msg = err instanceof Error ? err.message : String(err);
+    console.error("ERROR:", msg);
   }
 }
 

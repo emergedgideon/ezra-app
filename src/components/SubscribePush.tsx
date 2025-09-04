@@ -45,7 +45,7 @@ export default function SubscribePush() {
         }
       }
 
-      // Ensure SW is ready (with a timeout so we see if it hangs)
+      // Ensure SW is ready
       setStep("waiting for service worker ready");
       const reg = await withTimeout(navigator.serviceWorker.ready, "service worker ready");
       console.log("[subscribe] sw ready:", reg.scope);
@@ -92,11 +92,12 @@ export default function SubscribePush() {
       setStatus("subscribed");
       setStep("✅ subscribed — you can send a test push");
       alert("✅ Subscribed to push.");
-    } catch (e: any) {
+    } catch (e) {
+      const msg = e instanceof Error ? e.message : String(e);
       console.error("[subscribe] error:", e);
       setStatus("error");
-      setStep(`❌ ${e?.message || String(e)}`);
-      alert(`Subscription failed: ${e?.message || String(e)}`);
+      setStep(`❌ ${msg}`);
+      alert(`Subscription failed: ${msg}`);
     }
   }
 
@@ -121,18 +122,36 @@ export default function SubscribePush() {
       setStep("✅ server accepted push — check notifications");
       alert("✅ Server accepted push. Check for a notification.");
     } catch (e) {
+      const msg = e instanceof Error ? e.message : String(e);
       console.error("[sendTest] network error:", e);
-      setStep(`❌ network error`);
-      alert(`Network error: ${String(e)}`);
+      setStep(`❌ network error: ${msg}`);
+      alert(`Network error: ${msg}`);
     }
   }
 
   return (
-    <div style={{ position: "fixed", bottom: 56, right: 12, zIndex: 9999, display: "flex", gap: 8, alignItems: "center" }}>
+    <div
+      style={{
+        position: "fixed",
+        bottom: 56,
+        right: 12,
+        zIndex: 9999,
+        display: "flex",
+        gap: 8,
+        alignItems: "center",
+      }}
+    >
       <button
         onClick={subscribe}
         disabled={status === "subscribing"}
-        style={{ padding: "10px 14px", borderRadius: 8, border: "1px solid #333", background: "#111", color: "#fff", cursor: status === "subscribing" ? "not-allowed" : "pointer" }}
+        style={{
+          padding: "10px 14px",
+          borderRadius: 8,
+          border: "1px solid #333",
+          background: "#111",
+          color: "#fff",
+          cursor: status === "subscribing" ? "not-allowed" : "pointer",
+        }}
       >
         Subscribe to Push ({status})
       </button>
@@ -140,7 +159,14 @@ export default function SubscribePush() {
         onClick={sendTest}
         disabled={status !== "subscribed"}
         title={status !== "subscribed" ? "Subscribe first" : ""}
-        style={{ padding: "10px 14px", borderRadius: 8, border: "1px solid #333", background: status === "subscribed" ? "#111" : "#222", color: "#fff", cursor: status === "subscribed" ? "pointer" : "not-allowed" }}
+        style={{
+          padding: "10px 14px",
+          borderRadius: 8,
+          border: "1px solid #333",
+          background: status === "subscribed" ? "#111" : "#222",
+          color: "#fff",
+          cursor: status === "subscribed" ? "pointer" : "not-allowed",
+        }}
       >
         Send Test Push
       </button>
@@ -148,3 +174,4 @@ export default function SubscribePush() {
     </div>
   );
 }
+
