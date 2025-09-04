@@ -38,8 +38,6 @@ export default function Home() {
   const [busy, setBusy] = useState<string>("");
   const listRef = useRef<HTMLDivElement>(null);
   const [atBottom, setAtBottom] = useState<boolean>(true);
-  const mediaRecorderRef = useRef<MediaRecorder | null>(null);
-  const [isRecording, setIsRecording] = useState<boolean>(false);
 
 
   const [q, setQ] = useState<string>("");
@@ -86,7 +84,7 @@ export default function Home() {
       const res = await fetch("/api/tts", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ text, voice: "alloy", format: "mp3" }),
+        body: JSON.stringify({ text, voice: "onyx", format: "mp3" }),
       });
       if (!res.ok) throw new Error(`HTTP ${res.status}`);
       const blob = await res.blob();
@@ -100,48 +98,7 @@ export default function Home() {
     }
   }
 
-  async function toggleRecord() {
-    try {
-      if (isRecording) {
-        mediaRecorderRef.current?.stop();
-        return;
-      }
-      const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
-      const mr = new MediaRecorder(stream, { mimeType: "audio/webm" });
-      mediaRecorderRef.current = mr;
-      const chunks: BlobPart[] = [];
-      mr.ondataavailable = (ev) => {
-        if (ev.data?.size) chunks.push(ev.data);
-      };
-      mr.onstop = async () => {
-        setIsRecording(false);
-        try {
-          const blob = new Blob(chunks, { type: "audio/webm" });
-          const fd = new FormData();
-          fd.append("audio", blob, "audio.webm");
-          fd.append("filename", "audio.webm");
-          const res = await fetch("/api/transcribe", { method: "POST", body: fd });
-          if (!res.ok) throw new Error(`HTTP ${res.status}`);
-          const j = (await res.json()) as { text?: string };
-          if (j.text && j.text.trim()) {
-            setInput(j.text.trim());
-          }
-        } catch (err) {
-          console.error("transcribe error", err);
-          setBusy(`Transcribe error: ${toErrorMessage(err)}`);
-          setTimeout(() => setBusy(""), 1200);
-        } finally {
-          stream.getTracks().forEach((t) => t.stop());
-        }
-      };
-      setIsRecording(true);
-      mr.start();
-    } catch (e) {
-      console.error("mic error", e);
-      setBusy(`Mic error: ${toErrorMessage(e)}`);
-      setTimeout(() => setBusy(""), 1200);
-    }
-  }
+  // voice recording removed by request
 
 
   useEffect(() => {
@@ -367,11 +324,8 @@ export default function Home() {
             <div style={styles.buttonRow}>
               <button type="submit" disabled={!input.trim()} style={styles.btn}>Send</button>
               <button type="button" onClick={handleSave} style={styles.btn}>Save</button>
-              <button type="button" onClick={() => onSearch()}  style={styles.btn}>Search</button>
+              {/* Removed duplicate Search button in chat controls */}
               <button type="button" onClick={handleReset} style={styles.btn}>Reset</button>
-              <button type="button" onClick={toggleRecord} style={{ ...styles.btn, ...(isRecording ? styles.btnRec : null) }}>
-                {isRecording ? "Stop" : "Record"}
-              </button>
               {!atBottom && (
                 <button type="button" onClick={() => scrollToBottom("smooth")} style={styles.btn}>
                   Scroll to bottom
@@ -575,10 +529,6 @@ const styles: Record<string, React.CSSProperties> = {
     cursor: "pointer",
     whiteSpace: "nowrap",
     maxWidth: "100%",
-  },
-  btnRec: {
-    borderColor: "#ff7e5f",
-    color: "#ff7e5f",
   },
   iconBtn: {
     border: "1px solid rgba(255,255,255,0.2)",

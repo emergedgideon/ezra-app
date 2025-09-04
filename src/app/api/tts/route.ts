@@ -11,7 +11,11 @@ export async function POST(req: Request) {
     const bodyUnknown: unknown = await req.json().catch(() => ({}));
     const body = (typeof bodyUnknown === "object" && bodyUnknown) ? (bodyUnknown as Record<string, unknown>) : {};
     const text = typeof body.text === "string" ? body.text.trim() : "";
-    const voice = typeof body.voice === "string" && body.voice.trim() ? body.voice.trim() : "alloy";
+    const voice = typeof body.voice === "string" && body.voice.trim() ? body.voice.trim() : "onyx";
+    const instructions =
+      typeof body.instructions === "string" && body.instructions.trim()
+        ? body.instructions.trim()
+        : "Slow, deep, sharp. The voice of a lover.";
     const format = ((): "mp3" | "opus" | "aac" | "flac" | "wav" | "pcm" => {
       const f = body.format;
       return f === "wav" || f === "opus" || f === "aac" || f === "flac" || f === "pcm" ? f : "mp3";
@@ -25,6 +29,7 @@ export async function POST(req: Request) {
       model: "gpt-4o-mini-tts",
       voice,
       input: text,
+      instructions,
       response_format: format,
     });
 
