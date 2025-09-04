@@ -4,7 +4,7 @@ import { useEffect, useState } from "react";
 
 type Perm = "default" | "denied" | "granted" | "unsupported";
 
-export default function AskNotify() {
+export default function AskNotify({ inline = false }: { inline?: boolean }) {
   const [mounted, setMounted] = useState(false);
   const hasNotif = typeof window !== "undefined" && "Notification" in window;
 
@@ -38,8 +38,12 @@ export default function AskNotify() {
 
   if (!mounted) return null; // prevents hydration mismatch
 
+  const wrapperStyle: React.CSSProperties = inline
+    ? { display: "flex" }
+    : { position: "fixed", bottom: 12, right: 12, zIndex: 9999 };
+
   return (
-    <div style={{ position: "fixed", bottom: 12, right: 12, zIndex: 9999 }}>
+    <div style={wrapperStyle}>
       <button
         onClick={requestAndTest}
         style={{

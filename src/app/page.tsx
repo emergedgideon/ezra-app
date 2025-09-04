@@ -3,6 +3,8 @@
 
 
 import { useEffect, useRef, useState } from "react";
+import AskNotify from "@/components/AskNotify";
+import SubscribePush from "@/components/SubscribePush";
 
 
 type UiRole = "you" | "ezra";
@@ -35,6 +37,7 @@ export default function Home() {
   const [messages, setMessages] = useState<UiMsg[]>([]);
   const [busy, setBusy] = useState<string>("");
   const listRef = useRef<HTMLDivElement>(null);
+  const [atBottom, setAtBottom] = useState<boolean>(true);
 
 
   const [q, setQ] = useState<string>("");
@@ -66,6 +69,14 @@ export default function Home() {
   }
   function scrollToBottom(behavior: ScrollBehavior = "auto") {
     requestAnimationFrame(() => listRef.current?.scrollTo({ top: 1e9, behavior }));
+  }
+
+  function onChatScroll() {
+    const el = listRef.current;
+    if (!el) return;
+    const threshold = 40; // px
+    const nearBottom = el.scrollHeight - el.scrollTop - el.clientHeight <= threshold;
+    setAtBottom(nearBottom);
   }
 
 
@@ -249,7 +260,7 @@ export default function Home() {
         {/* Chat */}
         <section style={styles.panel}>
           <h2 style={styles.h2}>Chat</h2>
-          <div ref={listRef} style={styles.chatList}>
+          <div ref={listRef} style={styles.chatList} onScroll={onChatScroll}>
             {messages.length === 0 ? (
               <div style={styles.empty}>No messages yet. Say hi 👋</div>
             ) : (
@@ -289,6 +300,11 @@ export default function Home() {
               <button type="button" onClick={handleSave} style={styles.btn}>Save</button>
               <button type="button" onClick={() => onSearch()}  style={styles.btn}>Search</button>
               <button type="button" onClick={handleReset} style={styles.btn}>Reset</button>
+              {!atBottom && (
+                <button type="button" onClick={() => scrollToBottom("smooth")} style={styles.btn}>
+                  Scroll to bottom
+                </button>
+              )}
             </div>
           </form>
           <div style={styles.subtle}>{busy && busy}</div>
@@ -323,6 +339,16 @@ export default function Home() {
           </ul>
         </section>
       </div>
+
+      {/* Footer: Notifications */}
+      <footer style={styles.footer}>
+        <div style={styles.footerInner}>
+          <div style={{ display: "flex", gap: 12, flexWrap: "wrap", alignItems: "center" }}>
+            <AskNotify inline />
+            <SubscribePush inline />
+          </div>
+        </div>
+      </footer>
     </main>
   );
 }
@@ -335,7 +361,7 @@ const styles: Record<string, React.CSSProperties> = {
     color: "#f5f7fb",
     fontFamily: "system-ui, -apple-system, Segoe UI, Roboto, sans-serif",
     display: "grid",
-    gridTemplateRows: "auto 1fr",
+    gridTemplateRows: "auto 1fr auto",
     overflowX: "hidden",
   },
   header: {
@@ -373,6 +399,18 @@ const styles: Record<string, React.CSSProperties> = {
     width: "100%",
     margin: "0 auto",
     boxSizing: "border-box",
+  },
+  footer: {
+    marginTop: 8,
+  },
+  footerInner: {
+    maxWidth: 1100,
+    margin: "0 auto",
+    width: "100%",
+    padding: 12,
+    boxSizing: "border-box",
+    display: "flex",
+    justifyContent: "flex-end",
   },
   panel: {
     border: "1px solid rgba(255,255,255,0.08)",

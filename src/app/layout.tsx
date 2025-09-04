@@ -3,8 +3,6 @@ import { Geist, Geist_Mono } from "next/font/google";
 import "./globals.css";
 
 import SwRegister from "../components/SwRegister";
-import AskNotify from "../components/AskNotify";
-import SubscribePush from "../components/SubscribePush";
 
 const geistSans = Geist({ variable: "--font-geist-sans", subsets: ["latin"] });
 const geistMono = Geist_Mono({ variable: "--font-geist-mono", subsets: ["latin"] });
@@ -27,8 +25,6 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
       </head>
       <body className={`${geistSans.variable} ${geistMono.variable} antialiased`}>
         <SwRegister />
-        <AskNotify />
-        <SubscribePush />
         {children}
       </body>
     </html>

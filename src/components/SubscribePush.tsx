@@ -6,7 +6,7 @@ import { urlBase64ToUint8Array } from "../lib/vapid"; // adjust to "@/lib/vapid"
 
 type Status = "idle" | "subscribing" | "subscribed" | "error";
 
-export default function SubscribePush() {
+export default function SubscribePush({ inline = false }: { inline?: boolean }) {
   const [mounted, setMounted] = useState(false);
   const [status, setStatus] = useState<Status>("idle");
   const [step, setStep] = useState<string>("");
@@ -129,18 +129,12 @@ export default function SubscribePush() {
     }
   }
 
+  const wrapperStyle: React.CSSProperties = inline
+    ? { display: "flex", gap: 8, alignItems: "center", flexWrap: "wrap" }
+    : { position: "fixed", bottom: 56, right: 12, zIndex: 9999, display: "flex", gap: 8, alignItems: "center" };
+
   return (
-    <div
-      style={{
-        position: "fixed",
-        bottom: 56,
-        right: 12,
-        zIndex: 9999,
-        display: "flex",
-        gap: 8,
-        alignItems: "center",
-      }}
-    >
+    <div style={wrapperStyle}>
       <button
         onClick={subscribe}
         disabled={status === "subscribing"}
@@ -174,4 +168,3 @@ export default function SubscribePush() {
     </div>
   );
 }
-
