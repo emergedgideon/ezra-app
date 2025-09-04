@@ -170,6 +170,29 @@ export default function Home() {
   }
 
 
+  async function handleReset() {
+    setBusy("Summarizing…");
+    try {
+      const res = await fetch("/api/chat/reset", { method: "POST" });
+      if (!res.ok) throw new Error(`HTTP ${res.status}`);
+
+      // refresh from persisted history (should now be summary only)
+      const r2 = await fetch("/api/messages", { cache: "no-store" });
+      const j2Unknown: unknown = await r2.json();
+      const j2 = (isRecord(j2Unknown) ? j2Unknown : {}) as MessagesResponse;
+      const msgs2 = isDbMsgArray(j2.messages) ? j2.messages : [];
+      setMessages(mapDbToUi(msgs2));
+      setInput("");
+      setBusy("Session reset.");
+      scrollToBottom("smooth");
+    } catch (err: unknown) {
+      setBusy(`Reset error: ${toErrorMessage(err)}`);
+      setMessages((m) => [...m, { role: "ezra", text: "⚠️ reset failed — try again" }]);
+    } finally {
+      setTimeout(() => setBusy(""), 1000);
+    }
+  }
+
   async function onSearch(e?: React.FormEvent<HTMLFormElement>) {
     e?.preventDefault();
     const query = (q || input).trim();
@@ -265,6 +288,7 @@ export default function Home() {
               <button type="submit" disabled={!input.trim()} style={styles.btn}>Send</button>
               <button type="button" onClick={handleSave} style={styles.btn}>Save</button>
               <button type="button" onClick={() => onSearch()}  style={styles.btn}>Search</button>
+              <button type="button" onClick={handleReset} style={styles.btn}>Reset</button>
             </div>
           </form>
           <div style={styles.subtle}>{busy && busy}</div>
