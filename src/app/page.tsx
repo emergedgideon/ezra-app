@@ -43,12 +43,21 @@ export default function Home() {
 
 
   const [isWide, setIsWide] = useState<boolean>(false);
+  const initialScrolled = useRef<boolean>(false);
   useEffect(() => {
     const mq = window.matchMedia("(min-width: 900px)");
     const apply = () => setIsWide(mq.matches);
     apply();
     mq.addEventListener?.("change", apply);
     return () => mq.removeEventListener?.("change", apply);
+  }, []);
+
+  // ensure we land at the bottom on open
+  useEffect(() => {
+    if (!initialScrolled.current) {
+      scrollToBottom("auto");
+      initialScrolled.current = true;
+    }
   }, []);
 
 
@@ -76,7 +85,7 @@ export default function Home() {
   }, []);
 
 
-  function onInputChange(e: React.ChangeEvent<HTMLInputElement>) {
+  function onInputChange(e: React.ChangeEvent<HTMLTextAreaElement>) {
     setInput(e.target.value);
   }
   function onSearchInputChange(e: React.ChangeEvent<HTMLInputElement>) {
@@ -244,16 +253,19 @@ export default function Home() {
 
 
           <form onSubmit={onSend} style={styles.inputBar}>
-            <input
+            <textarea
+              rows={3}
               value={input}
               onChange={onInputChange}
               placeholder="Type a message"
               aria-label="Message"
               style={styles.input}
             />
-            <button type="submit" disabled={!input.trim()} style={styles.btn}>Send</button>
-            <button type="button" onClick={handleSave} style={styles.btn}>Save</button>
-            <button type="button" onClick={() => onSearch()}  style={styles.btn}>Search</button>
+            <div style={styles.buttonRow}>
+              <button type="submit" disabled={!input.trim()} style={styles.btn}>Send</button>
+              <button type="button" onClick={handleSave} style={styles.btn}>Save</button>
+              <button type="button" onClick={() => onSearch()}  style={styles.btn}>Search</button>
+            </div>
           </form>
           <div style={styles.subtle}>{busy && busy}</div>
         </section>
@@ -266,7 +278,6 @@ export default function Home() {
             <input
               value={q}
               onChange={onSearchInputChange}
-              placeholder='Try: Ted, Orion, love, ping'
               style={styles.input}
             />
             <button type="submit" style={styles.btn}>Search</button>
@@ -296,7 +307,7 @@ export default function Home() {
 const styles: Record<string, React.CSSProperties> = {
   shell: {
     height: "100dvh",
-    background: "#0b0b10",
+    background: "linear-gradient(180deg, #2b1055 0%, #ff7e5f 45%, #feb47b 100%)",
     color: "#f5f7fb",
     fontFamily: "system-ui, -apple-system, Segoe UI, Roboto, sans-serif",
     display: "grid",
@@ -315,7 +326,12 @@ const styles: Record<string, React.CSSProperties> = {
     top: 0,
     zIndex: 10,
   },
-  brand: { fontWeight: 700, letterSpacing: 0.3 },
+  brand: {
+    fontWeight: 500,
+    letterSpacing: 0.5,
+    fontSize: 24,
+    fontFamily: '"Brush Script MT", "Segoe Script", "Lucida Handwriting", cursive',
+  },
   pill: {
     padding: "6px 10px",
     border: "1px solid rgba(255,255,255,0.12)",
@@ -345,7 +361,12 @@ const styles: Record<string, React.CSSProperties> = {
     gridTemplateRows: "auto 1fr auto auto",
     gap: 8,
   },
-  h2: { margin: 0, fontSize: 16, opacity: 0.9 },
+  h2: {
+    margin: 0,
+    fontSize: 16,
+    opacity: 0.9,
+    fontFamily: '"Brush Script MT", "Segoe Script", "Lucida Handwriting", cursive',
+  },
   chatList: {
     overflowY: "auto",
     overflowX: "hidden",
@@ -377,10 +398,10 @@ const styles: Record<string, React.CSSProperties> = {
     overflowWrap: "anywhere",
   },
   youBubble: {
-    background: "linear-gradient(180deg, #243b55, #141e30)",
+    background: "#ff7e5f",
   },
   ezraBubble: {
-    background: "rgba(255,255,255,0.06)",
+    background: "#2b1055",
   },
   inputBar: {
     display: "flex",
@@ -392,19 +413,24 @@ const styles: Record<string, React.CSSProperties> = {
     borderRadius: 12,
     padding: 8,
     flexWrap: "wrap",
+    flexDirection: "column",
   },
   input: {
     flex: 1,
     appearance: "none",
     borderRadius: 999,
     border: "1px solid rgba(255,255,255,0.14)",
-    background: "rgba(255,255,255,0.06)",
+    background: "#2b1055",
     color: "#f5f7fb",
     padding: "12px 14px",
     outline: "none",
     fontSize: 16,
     minWidth: 0,
+    minHeight: 48,
+    width: "100%",
+    resize: "vertical",
   },
+  buttonRow: { display: "flex", gap: 8, justifyContent: "flex-end", flexWrap: "wrap" },
   btn: {
     border: "1px solid rgba(255,255,255,0.2)",
     background: "transparent",
@@ -439,4 +465,3 @@ const styles: Record<string, React.CSSProperties> = {
   tags: { opacity: 0.7, fontSize: 12, marginTop: 6 },
   empty: { height: "100%", display: "grid", placeItems: "center", opacity: 0.6 },
 };
-
