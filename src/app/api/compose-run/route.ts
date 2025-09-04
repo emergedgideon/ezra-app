@@ -54,7 +54,7 @@ export async function POST(req: Request) {
     // Choose a target session: use the most recently active session from messages, else create one.
     let targetSession: string | null = null;
     {
-      const { rows } = await sql<{ session_id: string }[]>`
+      const { rows } = await sql<{ session_id: string }>`
         SELECT session_id FROM messages ORDER BY created_at DESC LIMIT 1
       `;
       targetSession = rows[0]?.session_id ?? null;
@@ -67,7 +67,7 @@ export async function POST(req: Request) {
     }
 
     // Load recent context (last 10 messages)
-    const { rows: history } = await sql<MsgRow[]>`
+    const { rows: history } = await sql<MsgRow>`
       SELECT id, session_id, role, content, created_at
       FROM messages
       WHERE session_id = ${targetSession}::uuid
@@ -113,9 +113,8 @@ export async function POST(req: Request) {
     if (sub) {
       const title = text.length > 60 ? text.slice(0, 57) + "…" : text;
       const payload = JSON.stringify({ title, body: "", data: { url: "/" } });
-      await webpush
-        .sendNotification(sub as unknown as webpush.PushSubscription, payload)
-        .catch(() => {});
+      const pushSub = sub as unknown as { endpoint: string; keys?: { p256dh?: string; auth?: string } };
+      await webpush.sendNotification(pushSub, payload).catch(() => {});
     }
 
     return NextResponse.json({ ok: true, sent: true, session: targetSession, text });
