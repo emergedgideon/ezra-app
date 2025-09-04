@@ -25,23 +25,9 @@ async function generateSummary(history: DbMsg[]): Promise<string> {
   };
 
   try {
-    const isResponses = MODEL?.startsWith("gpt-5");
-    if (isResponses) {
-      // Use Responses API via SDK
-      const r = await openai.responses.create({
-        model: MODEL,
-        input: [
-          { role: system.role, content: [{ type: "output_text", text: system.content }] },
-          { role: user.role, content: [{ type: "input_text", text: user.content }] },
-        ],
-      } as any);
-      const text = (r.output_text || "").trim();
-      return text || "(summary unavailable)";
-    }
-
     const resp = await openai.chat.completions.create({
       model: MODEL || "gpt-4o-mini",
-      messages: [system, user] as any,
+      messages: [system, user],
       temperature: 0.2,
     });
     const summary = resp.choices?.[0]?.message?.content?.trim() || "";
@@ -93,4 +79,3 @@ export async function POST() {
 
   return NextResponse.json({ session: sid, summary, memoryId });
 }
-
