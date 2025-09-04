@@ -12,9 +12,9 @@ export async function POST(req: Request) {
     const body = (typeof bodyUnknown === "object" && bodyUnknown) ? (bodyUnknown as Record<string, unknown>) : {};
     const text = typeof body.text === "string" ? body.text.trim() : "";
     const voice = typeof body.voice === "string" && body.voice.trim() ? body.voice.trim() : "alloy";
-    const format = ((): "mp3" | "wav" | "ogg" => {
+    const format = ((): "mp3" | "opus" | "aac" | "flac" | "wav" | "pcm" => {
       const f = body.format;
-      return f === "wav" || f === "ogg" ? f : "mp3";
+      return f === "wav" || f === "opus" || f === "aac" || f === "flac" || f === "pcm" ? f : "mp3";
     })();
 
     if (!text) {
@@ -25,12 +25,23 @@ export async function POST(req: Request) {
       model: "gpt-4o-mini-tts",
       voice,
       input: text,
-      format,
+      response_format: format,
     });
 
     const arrayBuffer = await result.arrayBuffer();
     const bytes = Buffer.from(arrayBuffer);
-    const type = format === "wav" ? "audio/wav" : format === "ogg" ? "audio/ogg" : "audio/mpeg";
+    const type =
+      format === "mp3"
+        ? "audio/mpeg"
+        : format === "wav"
+        ? "audio/wav"
+        : format === "opus"
+        ? "audio/ogg; codecs=opus"
+        : format === "aac"
+        ? "audio/aac"
+        : format === "flac"
+        ? "audio/flac"
+        : "application/octet-stream"; // pcm
     return new Response(bytes, {
       status: 200,
       headers: {
