@@ -55,6 +55,35 @@ export default function Home() {
     return () => mq.removeEventListener?.("change", apply);
   }, []);
 
+  // Heartbeat: mark this session as active while the app is visible
+  useEffect(() => {
+    let running = false;
+    const beat = async () => {
+      if (running || document.visibilityState !== "visible") return;
+      running = true;
+      try {
+        await fetch("/api/heartbeat", { method: "POST" });
+      } catch {}
+      running = false;
+    };
+    const onVis = () => {
+      if (document.visibilityState === "visible") {
+        beat();
+      }
+    };
+    document.addEventListener("visibilitychange", onVis);
+    // periodic while visible
+    const timer = window.setInterval(() => {
+      if (document.visibilityState === "visible") beat();
+    }, 30_000);
+    // initial
+    if (document.visibilityState === "visible") beat();
+    return () => {
+      document.removeEventListener("visibilitychange", onVis);
+      window.clearInterval(timer);
+    };
+  }, []);
+
   // ensure we land at the bottom on open
   useEffect(() => {
     if (!initialScrolled.current) {

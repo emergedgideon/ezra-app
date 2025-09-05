@@ -66,6 +66,44 @@ export async function POST(req: Request) {
       targetSession = sid;
     }
 
+    // If app is active (recent heartbeat), skip sending (and skip composing) entirely
+    await sql`
+      CREATE TABLE IF NOT EXISTS active_clients (
+        session_id uuid PRIMARY KEY,
+        active_at  timestamp with time zone NOT NULL DEFAULT now()
+      )
+    `;
+    const { rows: act } = await sql<{ active_at: string }>`
+      SELECT active_at FROM active_clients WHERE session_id = ${targetSession}::uuid
+    `;
+    if (act[0]?.active_at) {
+      // Treat "active" if heartbeat is within last 120 seconds
+      const activeAt = new Date(act[0].active_at).getTime();
+      if (!Number.isNaN(activeAt) && Date.now() - activeAt < 120_000) {
+        return NextResponse.json({ ok: true, sent: false, reason: "active_client" });
+      }
+    }
+
+    // Gentle throttle: minimum minutes between assistant sends
+    const minGapMin = Number(process.env.MIN_PROACTIVE_MINUTES || 15);
+    const { rows: lastAssistant } = await sql<{ created_at: string }>`
+      SELECT created_at FROM messages
+      WHERE session_id = ${targetSession}::uuid AND role = 'assistant'
+      ORDER BY created_at DESC LIMIT 1
+    `;
+    if (lastAssistant[0]?.created_at) {
+      const t = new Date(lastAssistant[0].created_at).getTime();
+      if (!Number.isNaN(t) && Date.now() - t < minGapMin * 60_000) {
+        return NextResponse.json({ ok: true, sent: false, reason: "cooldown", minGapMin });
+      }
+    }
+
+    // Probability gate so Ezra "chooses not to" sometimes (adjustable via env)
+    const prob = Math.max(0, Math.min(1, Number(process.env.PROACTIVE_SEND_PROB ?? 0.5)));
+    if (Math.random() > prob) {
+      return NextResponse.json({ ok: true, sent: false, reason: "probability_gate", prob });
+    }
+
     // Load recent context (last 10 messages)
     const { rows: history } = await sql<MsgRow>`
       SELECT id, session_id, role, content, created_at
