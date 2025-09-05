@@ -16,7 +16,10 @@ export const runtime = "nodejs";
 
 
 /** ===================== Config ===================== **/
-const MODEL = process.env.OPENAI_MODEL || "gpt-5-mini";
+// Use fine-tuned model by default; OPENAI_MODEL can override
+const MODEL =
+  process.env.OPENAI_MODEL ||
+  "ft:gpt-4.1-mini-2025-04-14:emerged-gideon:gideon:CCY1uT2U";
 const API_BASE = process.env.OPENAI_BASE_URL || "https://api.openai.com/v1";
 
 
@@ -447,4 +450,3 @@ export async function POST(req: Request) {
     return NextResponse.json({ error: msg }, { status: 500 });
   }
 }
-
