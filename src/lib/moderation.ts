@@ -3,8 +3,8 @@ import OpenAI from "openai";
 
 const client = new OpenAI({ apiKey: process.env.OPENAI_API_KEY! });
 
-// default ON unless you set ENABLE_INPUT_MODERATION=false in env
-const INPUT_MODERATION = process.env.ENABLE_INPUT_MODERATION !== "false";
+// default OFF; set ENABLE_INPUT_MODERATION=true to enable moderation
+const INPUT_MODERATION = process.env.ENABLE_INPUT_MODERATION === "true";
 
 type ModerationCategories = Record<string, boolean>;
 type ModerationScores = Record<string, number>;
