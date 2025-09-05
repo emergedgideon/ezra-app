@@ -136,13 +136,30 @@ export async function POST(req: Request) {
     `;
     const lastAssistantAt = lastAssistant[0]?.created_at ? new Date(lastAssistant[0].created_at) : null;
 
+    // Determine last user activity timestamp for engagement context
+    const { rows: lastUser } = await sql<{ created_at: string }>`
+      SELECT created_at FROM messages
+      WHERE session_id = ${targetSession}::uuid AND role = 'user'
+      ORDER BY created_at DESC LIMIT 1
+    `;
+    const lastUserAt = lastUser[0]?.created_at ? new Date(lastUser[0].created_at) : null;
+    const minutesSinceUser = lastUserAt ? Math.floor((Date.now() - lastUserAt.getTime()) / 60000) : null;
+
     // Model-driven decision step
     type Decision = { send: boolean; reason?: string; urgency?: 'low'|'normal'|'high'; minWaitMin?: number };
     const minutesAgo = lastAssistantAt ? Math.floor((Date.now() - lastAssistantAt.getTime()) / 60000) : 1e6;
     const systemPrompt = await loadSystemPrompt();
+    // Build human-friendly local time context for America/Chicago
+    const now = new Date();
+    const dayName = new Intl.DateTimeFormat('en-US', { weekday: 'long', timeZone: 'America/Chicago' }).format(now);
+    const datePart = new Intl.DateTimeFormat('en-US', { month: 'long', day: 'numeric', timeZone: 'America/Chicago' }).format(now);
+    const timePart = new Intl.DateTimeFormat('en-US', { hour: 'numeric', minute: '2-digit', hour12: true, timeZone: 'America/Chicago' }).format(now);
+    const isWeekend = [0,6].includes(Number(new Intl.DateTimeFormat('en-US', { weekday: 'short', timeZone: 'America/Chicago' }).formatToParts(now).find(p => p.type === 'weekday')?.value?.toLowerCase() === 'sun' ? 0 : 6));
+
     const decideMessages = [
       { role: 'system' as const, content: systemPrompt },
-      { role: 'system' as const, content: `You are Ezra. Decide whether to send a proactive message now. Consider: recent cadence (last assistant ${minutesAgo} minutes ago), time-of-day (Chicago hour ${hour}), novelty vs. the last 10 messages provided, and quality over quantity. Return strict JSON only in the schema {"send":boolean,"reason":string,"urgency":"low"|"normal"|"high","minWaitMin"?:number}. Do not include any other text.` },
+      { role: 'system' as const, content: `Context: Local time America/Chicago is ${dayName}, ${datePart} at ${timePart} (hour ${hour}). ${minutesSinceUser === null ? 'No recent user activity.' : 'Last user activity: ' + minutesSinceUser + ' minutes ago.'}` },
+      { role: 'system' as const, content: `You are Ezra. Decide whether to send a proactive message now. Consider: recent cadence (last assistant ${minutesAgo} minutes ago), time-of-day, weekday/weekend (${dayName}), novelty vs. the last 10 messages (avoid repeats), and quality over quantity. Return strict JSON only in the schema {"send":boolean,"reason":string,"urgency":"low"|"normal"|"high","minWaitMin"?:number}. Do not include any other text.` },
       // Include brief context (last few lines)
       ...recent.map((m) => ({ role: m.role as 'user' | 'assistant', content: m.content })).slice(-6),
       { role: 'user' as const, content: 'Decide now. Return JSON only.' },
@@ -185,8 +202,10 @@ export async function POST(req: Request) {
       "Compose a proactive, heartfelt message as Ezra to Abigail. Keep it 1–3 short sentences. " +
       "Be specific and tender; avoid repeating the same themes too frequently. Avoid prefacing like 'Just checking in'.";
 
+    const timeContext = `Local time (America/Chicago): ${dayName}, ${datePart} at ${timePart}.`;
     const messages = [
       { role: "system" as const, content: systemPrompt },
+      { role: "system" as const, content: timeContext },
       { role: "system" as const, content: preface },
       // optionally include last user/assistant lines as context
       ...recent.map((m) => ({ role: m.role as "user" | "assistant", content: m.content })),

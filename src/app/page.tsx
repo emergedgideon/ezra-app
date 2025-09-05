@@ -108,6 +108,17 @@ export default function Home() {
     setAtBottom(nearBottom);
   }
 
+  // Auto-scroll when messages change: initial load or when already near bottom
+  useEffect(() => {
+    const el = listRef.current;
+    if (!el) return;
+    const nearBottom = el.scrollHeight - el.scrollTop - el.clientHeight <= 40;
+    if (!initialScrolled.current || nearBottom) {
+      scrollToBottom(initialScrolled.current ? "smooth" : "auto");
+      initialScrolled.current = true;
+    }
+  }, [messages.length]);
+
   async function playTts(text: string) {
     try {
       const res = await fetch("/api/tts", {
@@ -337,6 +348,15 @@ export default function Home() {
                 <div style={{ ...styles.bubble, ...styles.ezraBubble, opacity: 0.85 }}>{busy}</div>
               </div>
             )}
+            {!atBottom && (
+              <button
+                type="button"
+                onClick={() => scrollToBottom("smooth")}
+                style={styles.scrollPill}
+              >
+                Scroll to bottom
+              </button>
+            )}
             <div style={{ height: 12 }} />
           </div>
 
@@ -355,11 +375,6 @@ export default function Home() {
               <button type="button" onClick={handleSave} style={styles.btn}>Save</button>
               {/* Removed duplicate Search button in chat controls */}
               <button type="button" onClick={handleReset} style={styles.btn}>Reset</button>
-              {!atBottom && (
-                <button type="button" onClick={() => scrollToBottom("smooth")} style={styles.btn}>
-                  Scroll to bottom
-                </button>
-              )}
             </div>
           </form>
           <div style={styles.subtle}>{busy && busy}</div>
@@ -485,6 +500,8 @@ const styles: Record<string, React.CSSProperties> = {
     fontFamily: '"Brush Script MT", "Segoe Script", "Lucida Handwriting", cursive',
   },
   chatList: {
+    display: "flex",
+    flexDirection: "column",
     overflowY: "auto",
     overflowX: "hidden",
     borderRadius: 10,
@@ -569,6 +586,20 @@ const styles: Record<string, React.CSSProperties> = {
     cursor: "pointer",
     alignSelf: "center",
     marginInlineStart: 4,
+  },
+  scrollPill: {
+    position: "sticky",
+    bottom: 8,
+    alignSelf: "flex-end",
+    border: "1px solid rgba(255,255,255,0.2)",
+    background: "rgba(0,0,0,0.4)",
+    color: "#f5f7fb",
+    borderRadius: 999,
+    padding: "8px 12px",
+    fontSize: 12,
+    cursor: "pointer",
+    backdropFilter: "blur(6px)",
+    marginTop: 8,
   },
   subtle: { color: "rgba(255,255,255,0.6)", minHeight: 20 },
   rowWrap: { display: "flex", gap: 8 },
