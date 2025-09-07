@@ -32,6 +32,11 @@ type StoredSubscription = {
 
 export async function GET() {
   try {
+    // Global pause switch for any push side-effects
+    const paused = process.env.PROACTIVE_PAUSED !== 'false';
+    if (paused) {
+      return NextResponse.json({ ok: true, skipped: 'paused' });
+    }
     const url = process.env.GOOGLE_SHEET_CSV_URL;
     if (!url) {
       return NextResponse.json(

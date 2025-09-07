@@ -77,6 +77,12 @@ export async function POST(req: Request) {
     const url = new URL(req.url);
     const dry = url.searchParams.get("dry") === "1";
 
+    // Global pause switch (default: paused unless PROACTIVE_PAUSED explicitly set to 'false')
+    const paused = process.env.PROACTIVE_PAUSED !== 'false';
+    if (paused) {
+      return NextResponse.json({ ok: true, sent: false, reason: 'paused' }, { status: 200 });
+    }
+
     // Quiet hours (America/Chicago)
     const hour = chicagoHourNow();
     if (inQuietHours(hour)) {
