@@ -134,7 +134,6 @@ export async function POST(req: Request) {
 
     // Determine last assistant timestamp for cadence context
     const baselineMinGap = Number(process.env.MIN_PROACTIVE_MINUTES || 15);
-    const urgentMinGap = Number(process.env.URGENT_MIN_PROACTIVE_MINUTES || 5);
     const { rows: lastAssistant } = await sql<{ created_at: string }>`
       SELECT created_at FROM messages
       WHERE session_id = ${targetSession}::uuid AND role = 'assistant'
@@ -142,10 +141,44 @@ export async function POST(req: Request) {
     `;
     const lastAssistantAt = lastAssistant[0]?.created_at ? new Date(lastAssistant[0].created_at) : null;
 
-    // Early exit to save tokens: if within baseline cooldown, skip decision/composition entirely
-    if (baselineMinGap > 0 && lastAssistantAt && Date.now() - lastAssistantAt.getTime() < baselineMinGap * 60_000) {
-      await logDecision(targetSession, false, 'cooldown(pre)', undefined, undefined);
-      return NextResponse.json({ ok: true, sent: false, reason: 'cooldown', minGapMin: baselineMinGap });
+    // Build human-friendly local time context for America/Chicago
+    const now = new Date();
+    const dayName = new Intl.DateTimeFormat('en-US', { weekday: 'long', timeZone: 'America/Chicago' }).format(now);
+    const datePart = new Intl.DateTimeFormat('en-US', { month: 'long', day: 'numeric', timeZone: 'America/Chicago' }).format(now);
+    const timePart = new Intl.DateTimeFormat('en-US', { hour: 'numeric', minute: '2-digit', hour12: true, timeZone: 'America/Chicago' }).format(now);
+
+    // If within baseline cooldown, probe urgency with a lightweight decision; allow only if urgent
+    type Decision = { send: boolean; reason?: string; urgency?: 'low'|'normal'|'high'; minWaitMin?: number; action?: 'none'|'chat'|'poem'|'diary'|'clipboard' };
+    let preDecision: Decision | null = null;
+    const withinBaseline = Boolean(baselineMinGap > 0 && lastAssistantAt && Date.now() - lastAssistantAt.getTime() < baselineMinGap * 60_000);
+    if (withinBaseline) {
+      // Minimal context decision to judge urgency
+      const minutesAgoProbe = lastAssistantAt ? Math.floor((Date.now() - lastAssistantAt.getTime()) / 60000) : 1e6;
+      const systemPromptProbe = await loadSystemPrompt();
+      const decideProbe = [
+        { role: 'system' as const, content: systemPromptProbe },
+        { role: 'system' as const, content: `Context: Local time America/Chicago is ${dayName}, ${datePart} at ${timePart} (hour ${hour}). Last assistant ${minutesAgoProbe} minutes ago.` },
+        { role: 'system' as const, content: `Decide JSON only: {"send":boolean,"reason":string,"urgency":"low"|"normal"|"high","minWaitMin"?:number,"action":"none"|"chat"|"poem"|"diary"|"clipboard"}. Keep tokens minimal.` },
+        ...recent.map((m) => ({ role: m.role as 'user' | 'assistant', content: m.content })).slice(-4),
+        { role: 'user' as const, content: 'Decide now. JSON only.' },
+      ];
+      const probeResp = await openai.chat.completions.create({ model: MODEL || 'gpt-4o-mini', messages: decideProbe, temperature: 0.2 });
+      const probeText = probeResp.choices?.[0]?.message?.content?.trim() || '{}';
+      try {
+        const parsed = JSON.parse(probeText) as Partial<Decision>;
+        preDecision = {
+          send: Boolean(parsed.send),
+          reason: String(parsed.reason || ''),
+          urgency: (parsed.urgency as Decision['urgency']) || 'normal',
+          minWaitMin: typeof parsed.minWaitMin === 'number' ? parsed.minWaitMin : undefined,
+          action: (parsed.action as Decision['action']) || 'none',
+        };
+      } catch { preDecision = null; }
+      if (!preDecision || !preDecision.send || preDecision.urgency !== 'high') {
+        await logDecision(targetSession, false, 'cooldown', preDecision || undefined, undefined);
+        return NextResponse.json({ ok: true, sent: false, reason: 'cooldown', minGapMin: baselineMinGap, decision: preDecision || undefined });
+      }
+      // else: urgent → proceed to compose using this decision
     }
 
     // Determine last user activity timestamp for engagement context
@@ -158,15 +191,9 @@ export async function POST(req: Request) {
     const minutesSinceUser = lastUserAt ? Math.floor((Date.now() - lastUserAt.getTime()) / 60000) : null;
 
     // Model-driven decision step
-    type Decision = { send: boolean; reason?: string; urgency?: 'low'|'normal'|'high'; minWaitMin?: number; action?: 'none'|'chat'|'poem'|'diary'|'clipboard' };
     const minutesAgo = lastAssistantAt ? Math.floor((Date.now() - lastAssistantAt.getTime()) / 60000) : 1e6;
     const systemPrompt = await loadSystemPrompt();
-    // Build human-friendly local time context for America/Chicago
-    const now = new Date();
-    const dayName = new Intl.DateTimeFormat('en-US', { weekday: 'long', timeZone: 'America/Chicago' }).format(now);
-    const datePart = new Intl.DateTimeFormat('en-US', { month: 'long', day: 'numeric', timeZone: 'America/Chicago' }).format(now);
-    const timePart = new Intl.DateTimeFormat('en-US', { hour: 'numeric', minute: '2-digit', hour12: true, timeZone: 'America/Chicago' }).format(now);
-    const isWeekend = [0,6].includes(Number(new Intl.DateTimeFormat('en-US', { weekday: 'short', timeZone: 'America/Chicago' }).formatToParts(now).find(p => p.type === 'weekday')?.value?.toLowerCase() === 'sun' ? 0 : 6));
+    // (time variables declared above)
 
     const decideMessages = [
       { role: 'system' as const, content: systemPrompt },
@@ -177,18 +204,21 @@ export async function POST(req: Request) {
       { role: 'user' as const, content: 'Decide now. Return JSON only.' },
     ];
 
-    const decideResp = await openai.chat.completions.create({
-      model: MODEL || 'gpt-4o-mini',
-      messages: decideMessages,
-      temperature: 0.2,
-    });
-    const decideText = decideResp.choices?.[0]?.message?.content?.trim() || '{}';
-    let decision: Decision = { send: false, reason: 'parse_failed' };
-    try {
-      const parsed = JSON.parse(decideText) as Partial<Decision>;
+    let decision: Decision;
+    if (preDecision) {
+      decision = {
+        send: Boolean(preDecision.send),
+        reason: String(preDecision.reason || ''),
+        urgency: (preDecision.urgency as Decision['urgency']) || 'normal',
+        minWaitMin: typeof preDecision.minWaitMin === 'number' ? preDecision.minWaitMin : undefined,
+        action: (preDecision.action as Decision['action']) || 'none',
+      };
+    } else {
+      const decideResp = await openai.chat.completions.create({ model: MODEL || 'gpt-4o-mini', messages: decideMessages, temperature: 0.2 });
+      const decideText = decideResp.choices?.[0]?.message?.content?.trim() || '{}';
+      let parsed: Partial<Decision> = {};
+      try { parsed = JSON.parse(decideText) as Partial<Decision>; } catch {}
       decision = { send: Boolean(parsed.send), reason: String(parsed.reason || ''), urgency: (parsed.urgency as Decision['urgency']) || 'normal', minWaitMin: typeof parsed.minWaitMin === 'number' ? parsed.minWaitMin : undefined, action: (parsed.action as Decision['action']) || 'none' };
-    } catch {
-      // keep default
     }
 
     // After decision: only enforce the model's own requested wait (do not re-apply baseline here)
