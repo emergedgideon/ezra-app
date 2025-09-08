@@ -7,37 +7,20 @@ type Entry = { id: string; content: string; created_at: string };
 
 export default function PoetryPage() {
   const [items, setItems] = useState<Entry[]>([]);
-  const [text, setText] = useState("");
-  const [busy, setBusy] = useState("");
+  const [status, setStatus] = useState("");
 
   async function load() {
-    const r = await fetch("/api/poetry", { cache: "no-store" });
-    const j = (await r.json()) as { items?: Entry[] };
-    setItems(Array.isArray(j.items) ? j.items : []);
-  }
-  useEffect(() => { load(); }, []);
-
-  async function onAdd(e: React.FormEvent) {
-    e.preventDefault();
-    const content = text.trim();
-    if (!content) return;
-    setBusy("Saving…");
+    setStatus("Loading…");
     try {
-      const r = await fetch("/api/poetry", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ content }),
-      });
-      if (!r.ok) throw new Error(`HTTP ${r.status}`);
-      setText("");
-      await load();
-      setBusy("Saved");
+      const r = await fetch("/api/poetry", { cache: "no-store" });
+      const j = (await r.json()) as { items?: Entry[] };
+      setItems(Array.isArray(j.items) ? j.items : []);
+      setStatus("");
     } catch (e) {
-      setBusy(e instanceof Error ? e.message : String(e));
-    } finally {
-      setTimeout(() => setBusy(""), 800);
+      setStatus(e instanceof Error ? e.message : String(e));
     }
   }
+  useEffect(() => { load(); }, []);
 
   return (
     <main style={styles.shell}>
@@ -47,19 +30,11 @@ export default function PoetryPage() {
       </header>
 
       <section style={styles.panel}>
-        <form onSubmit={onAdd} style={{ display: "flex", flexDirection: "column", gap: 8 }}>
-          <textarea
-            rows={6}
-            value={text}
-            onChange={(e) => setText(e.target.value)}
-            placeholder="Compose a poem…"
-            style={styles.input}
-          />
-          <div style={{ display: "flex", gap: 8, justifyContent: "flex-end" }}>
-            <button style={styles.btn} disabled={!text.trim()}>Add Poem</button>
-          </div>
-        </form>
-        <small style={{ opacity: 0.8 }}>{busy}</small>
+        <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
+          <div style={{ opacity: 0.8 }}>Newest first</div>
+          <Link href="/" style={styles.btn}>Chat</Link>
+        </div>
+        <small style={{ opacity: 0.8 }}>{status}</small>
       </section>
 
       <section style={styles.list}>

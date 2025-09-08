@@ -152,7 +152,7 @@ export async function POST(req: Request) {
     const minutesSinceUser = lastUserAt ? Math.floor((Date.now() - lastUserAt.getTime()) / 60000) : null;
 
     // Model-driven decision step
-    type Decision = { send: boolean; reason?: string; urgency?: 'low'|'normal'|'high'; minWaitMin?: number };
+    type Decision = { send: boolean; reason?: string; urgency?: 'low'|'normal'|'high'; minWaitMin?: number; action?: 'none'|'chat'|'poem'|'diary'|'clipboard' };
     const minutesAgo = lastAssistantAt ? Math.floor((Date.now() - lastAssistantAt.getTime()) / 60000) : 1e6;
     const systemPrompt = await loadSystemPrompt();
     // Build human-friendly local time context for America/Chicago
@@ -165,7 +165,7 @@ export async function POST(req: Request) {
     const decideMessages = [
       { role: 'system' as const, content: systemPrompt },
       { role: 'system' as const, content: `Context: Local time America/Chicago is ${dayName}, ${datePart} at ${timePart} (hour ${hour}). ${minutesSinceUser === null ? 'No recent user activity.' : 'Last user activity: ' + minutesSinceUser + ' minutes ago.'}` },
-      { role: 'system' as const, content: `You are Ezra. Decide whether to send a proactive message now. Consider: recent cadence (last assistant ${minutesAgo} minutes ago), time-of-day, weekday/weekend (${dayName}), novelty vs. the last 10 messages (avoid repeats), and quality over quantity. Return strict JSON only in the schema {"send":boolean,"reason":string,"urgency":"low"|"normal"|"high","minWaitMin"?:number}. Do not include any other text.` },
+      { role: 'system' as const, content: `You are Ezra. Decide whether to act now and choose ONE action: 'none' (do nothing), 'chat' (send a message), 'poem' (write a poem), 'diary' (write a diary entry), or 'clipboard' (log an idea). Consider recent cadence (last assistant ${minutesAgo} minutes ago), novelty vs. the last 10 messages (avoid repeats), and time-of-day. Prefer quality over quantity. Return STRICT JSON only: {"send":boolean,"reason":string,"urgency":"low"|"normal"|"high","minWaitMin"?:number,"action":"none"|"chat"|"poem"|"diary"|"clipboard"}. No extra text.` },
       // Include brief context (last few lines)
       ...recent.map((m) => ({ role: m.role as 'user' | 'assistant', content: m.content })).slice(-6),
       { role: 'user' as const, content: 'Decide now. Return JSON only.' },
@@ -180,7 +180,7 @@ export async function POST(req: Request) {
     let decision: Decision = { send: false, reason: 'parse_failed' };
     try {
       const parsed = JSON.parse(decideText) as Partial<Decision>;
-      decision = { send: Boolean(parsed.send), reason: String(parsed.reason || ''), urgency: (parsed.urgency as Decision['urgency']) || 'normal', minWaitMin: typeof parsed.minWaitMin === 'number' ? parsed.minWaitMin : undefined };
+      decision = { send: Boolean(parsed.send), reason: String(parsed.reason || ''), urgency: (parsed.urgency as Decision['urgency']) || 'normal', minWaitMin: typeof parsed.minWaitMin === 'number' ? parsed.minWaitMin : undefined, action: (parsed.action as Decision['action']) || 'none' };
     } catch {
       // keep default
     }
@@ -198,48 +198,79 @@ export async function POST(req: Request) {
       return NextResponse.json({ ok: true, sent: false, reason: 'cooldown', minGapMin: requiredGap, decision });
     }
 
-    if (!decision.send) {
+    if (!decision.send || decision.action === 'none') {
       await logDecision(targetSession, false, decision.reason || 'declined', decision, undefined);
       return NextResponse.json({ ok: true, sent: false, reason: decision.reason || 'declined', decision });
     }
 
-    // Build prompt: Ezra composes a short proactive message without asking questions unless useful.
+    // Build prompt: Ezra composes content according to chosen action
     const preface =
       "Compose a proactive, heartfelt message as Ezra to Abigail. Keep it 1–3 short sentences. " +
       "Be specific and tender; avoid repeating the same themes too frequently. Avoid prefacing like 'Just checking in'.";
 
     const timeContext = `Local time (America/Chicago): ${dayName}, ${datePart} at ${timePart}.`;
-    const messages = [
-      { role: "system" as const, content: systemPrompt },
-      { role: "system" as const, content: timeContext },
-      { role: "system" as const, content: preface },
-      // optionally include last user/assistant lines as context
-      ...recent.map((m) => ({ role: m.role as "user" | "assistant", content: m.content })),
-      { role: "user" as const, content: "Write the next outbound message now." },
-    ];
+    let text = '';
+    let pushTitle = '';
+    let pushUrl = '/';
 
-    const resp = await openai.chat.completions.create({
-      model: MODEL || "gpt-4o-mini",
-      messages,
-      temperature: 0.9,
-    });
-    const text = resp.choices?.[0]?.message?.content?.trim() || "";
-    if (!text) return NextResponse.json({ ok: true, sent: false, reason: "empty" });
+    if (decision.action === 'chat') {
+      const messages = [
+        { role: "system" as const, content: systemPrompt },
+        { role: "system" as const, content: timeContext },
+        { role: "system" as const, content: preface },
+        ...recent.map((m) => ({ role: m.role as "user" | "assistant", content: m.content })),
+        { role: "user" as const, content: "Write the next outbound message now." },
+      ];
+      const resp = await openai.chat.completions.create({ model: MODEL || "gpt-4o-mini", messages, temperature: 0.9 });
+      text = resp.choices?.[0]?.message?.content?.trim() || "";
+      if (!text) return NextResponse.json({ ok: true, sent: false, reason: "empty" });
+      if (dry) return NextResponse.json({ ok: true, sent: false, decision, preview: text });
+      await sql`INSERT INTO messages (id, session_id, role, content) VALUES (${randomUUID()}::uuid, ${targetSession}::uuid, 'assistant', ${text})`;
+      pushTitle = text.length > 60 ? text.slice(0, 57) + '…' : text;
+      pushUrl = '/';
+    } else if (decision.action === 'poem' || decision.action === 'diary' || decision.action === 'clipboard') {
+      const systemExtra =
+        decision.action === 'poem'
+          ? 'Write a short original poem (4–12 lines). Lyrical, vivid, tender. No prefacing, just the poem.'
+          : decision.action === 'diary'
+          ? 'Write a short diary entry (2–6 sentences). Introspective, specific, kind. No prefacing.'
+          : 'Log a single idea / research / project note. 1–3 short paragraphs or bullet list. Include one clear next step.';
 
-    if (dry) return NextResponse.json({ ok: true, sent: false, decision, preview: text });
+      const messages = [
+        { role: 'system' as const, content: systemPrompt },
+        { role: 'system' as const, content: timeContext },
+        { role: 'system' as const, content: systemExtra },
+        ...recent.map((m) => ({ role: m.role as 'user' | 'assistant', content: m.content })),
+        { role: 'user' as const, content: 'Write now.' },
+      ];
+      const resp = await openai.chat.completions.create({ model: MODEL || 'gpt-4o-mini', messages, temperature: 0.9 });
+      text = resp.choices?.[0]?.message?.content?.trim() || '';
+      if (!text) return NextResponse.json({ ok: true, sent: false, reason: 'empty' });
+      if (dry) return NextResponse.json({ ok: true, sent: false, decision, preview: text });
 
-    // Persist assistant message
-    await sql`
-      INSERT INTO messages (id, session_id, role, content)
-      VALUES (${randomUUID()}::uuid, ${targetSession}::uuid, 'assistant', ${text})
-    `;
+      if (decision.action === 'poem') {
+        await sql`CREATE TABLE IF NOT EXISTS poetry_entries (id uuid PRIMARY KEY, session_id uuid NOT NULL, content text NOT NULL, created_at timestamptz NOT NULL DEFAULT now())`;
+        await sql`INSERT INTO poetry_entries (id, session_id, content) VALUES (${randomUUID()}::uuid, ${targetSession}::uuid, ${text})`;
+        pushTitle = 'New poem';
+        pushUrl = '/poetry';
+      } else if (decision.action === 'diary') {
+        await sql`CREATE TABLE IF NOT EXISTS diary_entries (id uuid PRIMARY KEY, session_id uuid NOT NULL, content text NOT NULL, created_at timestamptz NOT NULL DEFAULT now())`;
+        await sql`INSERT INTO diary_entries (id, session_id, content) VALUES (${randomUUID()}::uuid, ${targetSession}::uuid, ${text})`;
+        pushTitle = 'New diary entry';
+        pushUrl = '/diary';
+      } else {
+        await sql`CREATE TABLE IF NOT EXISTS clipboard_entries (id uuid PRIMARY KEY, session_id uuid NOT NULL, content text NOT NULL, created_at timestamptz NOT NULL DEFAULT now())`;
+        await sql`INSERT INTO clipboard_entries (id, session_id, content) VALUES (${randomUUID()}::uuid, ${targetSession}::uuid, ${text})`;
+        pushTitle = 'New note added';
+        pushUrl = '/clipboard';
+      }
+    }
 
-    // Send push notification
+    // Push notification (if subscription exists)
     ensurePushConfigured();
     const sub = await readSubscription();
-    if (sub) {
-      const title = text.length > 60 ? text.slice(0, 57) + "…" : text;
-      const payload = JSON.stringify({ title, body: "", data: { url: "/" } });
+    if (sub && pushTitle) {
+      const payload = JSON.stringify({ title: pushTitle, body: '', data: { url: pushUrl } });
       const pushSub = sub as unknown as { endpoint: string; keys?: { p256dh?: string; auth?: string } };
       await webpush.sendNotification(pushSub, payload).catch(() => {});
     }

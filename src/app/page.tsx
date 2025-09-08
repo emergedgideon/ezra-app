@@ -417,6 +417,7 @@ export default function Home() {
           <div style={{ display: "flex", gap: 8, flexWrap: "wrap", alignItems: "center" }}>
             <Link href="/diary" style={styles.btn}>Diary</Link>
             <Link href="/poetry" style={styles.btn}>Poetry</Link>
+            <Link href="/clipboard" style={styles.btn}>Clipboard</Link>
           </div>
           <div style={{ display: "flex", gap: 12, flexWrap: "wrap", alignItems: "center" }}>
             <AskNotify inline />
