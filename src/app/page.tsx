@@ -3,6 +3,7 @@
 
 
 import { useEffect, useRef, useState } from "react";
+import Link from "next/link";
 import AskNotify from "@/components/AskNotify";
 import SubscribePush from "@/components/SubscribePush";
 
@@ -413,6 +414,10 @@ export default function Home() {
       {/* Footer: Notifications */}
       <footer style={styles.footer}>
         <div style={styles.footerInner}>
+          <div style={{ display: "flex", gap: 8, flexWrap: "wrap", alignItems: "center" }}>
+            <Link href="/diary" style={styles.btn}>Diary</Link>
+            <Link href="/poetry" style={styles.btn}>Poetry</Link>
+          </div>
           <div style={{ display: "flex", gap: 12, flexWrap: "wrap", alignItems: "center" }}>
             <AskNotify inline />
             <SubscribePush inline />
@@ -480,7 +485,7 @@ const styles: Record<string, React.CSSProperties> = {
     padding: 12,
     boxSizing: "border-box",
     display: "flex",
-    justifyContent: "flex-end",
+    justifyContent: "space-between",
   },
   panel: {
     border: "1px solid rgba(255,255,255,0.08)",
