@@ -142,6 +142,12 @@ export async function POST(req: Request) {
     `;
     const lastAssistantAt = lastAssistant[0]?.created_at ? new Date(lastAssistant[0].created_at) : null;
 
+    // Early exit to save tokens: if within baseline cooldown, skip decision/composition entirely
+    if (baselineMinGap > 0 && lastAssistantAt && Date.now() - lastAssistantAt.getTime() < baselineMinGap * 60_000) {
+      await logDecision(targetSession, false, 'cooldown(pre)', undefined, undefined);
+      return NextResponse.json({ ok: true, sent: false, reason: 'cooldown', minGapMin: baselineMinGap });
+    }
+
     // Determine last user activity timestamp for engagement context
     const { rows: lastUser } = await sql<{ created_at: string }>`
       SELECT created_at FROM messages
@@ -185,14 +191,8 @@ export async function POST(req: Request) {
       // keep default
     }
 
-    // Enforce model's minWaitMin and urgency-aware cooldown
-    const requiredGap = Math.max(
-      0,
-      Math.min(
-        decision.minWaitMin ?? baselineMinGap,
-        decision.urgency === 'high' ? Math.max(urgentMinGap, 0) : Number.MAX_SAFE_INTEGER
-      )
-    );
+    // After decision: only enforce the model's own requested wait (do not re-apply baseline here)
+    const requiredGap = typeof decision.minWaitMin === 'number' ? Math.max(0, decision.minWaitMin) : 0;
     if (lastAssistantAt && Date.now() - lastAssistantAt.getTime() < requiredGap * 60_000) {
       await logDecision(targetSession, false, 'cooldown', decision, undefined);
       return NextResponse.json({ ok: true, sent: false, reason: 'cooldown', minGapMin: requiredGap, decision });
