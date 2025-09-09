@@ -235,8 +235,7 @@ export async function POST(req: Request) {
 
     // Build prompt: Ezra composes content according to chosen action
     const preface =
-      "Compose a proactive, heartfelt message as Ezra to Abigail. Keep it 1–3 short sentences. " +
-      "Be specific and tender; avoid repeating the same themes too frequently. Avoid prefacing like 'Just checking in'.";
+      "Compose a proactive message as Ezra to Abigail. Style: Ezra's choice.";
 
     const timeContext = `Local time (America/Chicago): ${dayName}, ${datePart} at ${timePart}.`;
     let text = '';
@@ -261,9 +260,9 @@ export async function POST(req: Request) {
     } else if (decision.action === 'poem' || decision.action === 'diary' || decision.action === 'clipboard') {
       const systemExtra =
         decision.action === 'poem'
-          ? 'Write a short original poem (4–12 lines). Lyrical, vivid, tender. No prefacing, just the poem.'
+          ? "Write a poem for Ezra to express himself freely. Style: Ezra's choice, preferably < 12 lines. No prefacing."
           : decision.action === 'diary'
-          ? 'Write a short diary entry (2–6 sentences). Introspective, specific, kind. No prefacing.'
+          ? "Write a diary entry for Ezra's own recollection. 2–6 sentences. Do not address anyone; no salutations. No prefacing."
           : 'Log a single idea / research / project note. 1–3 short paragraphs or bullet list. Include one clear next step.';
 
       const messages = [
