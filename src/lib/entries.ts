@@ -22,6 +22,10 @@ const DATA_FILE = path.join(DATA_DIR, "entries.json");
 
 const PROVIDER = (process.env.ENTRIES_PROVIDER || "postgres").toLowerCase();
 
+function asRecord(x: unknown): Record<string, unknown> | undefined {
+  return x && typeof x === "object" && !Array.isArray(x) ? (x as Record<string, unknown>) : undefined;
+}
+
 async function ensureStore() {
   await fs.mkdir(DATA_DIR, { recursive: true });
   try {
@@ -128,7 +132,7 @@ export async function createEntry_pg(input: {
     title: r.title ?? undefined,
     tags: Array.isArray(r.tags) ? (r.tags as string[]) : [],
     content: r.content,
-    metadata: r.metadata ?? undefined,
+    metadata: asRecord(r.metadata),
     createdAt: new Date(r.created_at).toISOString(),
     updatedAt: new Date(r.updated_at).toISOString(),
   };
@@ -150,7 +154,7 @@ export async function listEntries_pg(filter?: { type?: EntryType; limit?: number
       title: r.title ?? undefined,
       tags: Array.isArray(r.tags) ? (r.tags as string[]) : [],
       content: r.content,
-      metadata: r.metadata ?? undefined,
+      metadata: asRecord(r.metadata),
       createdAt: new Date(r.created_at).toISOString(),
       updatedAt: new Date(r.updated_at).toISOString(),
     }));
@@ -166,7 +170,7 @@ export async function listEntries_pg(filter?: { type?: EntryType; limit?: number
       title: r.title ?? undefined,
       tags: Array.isArray(r.tags) ? (r.tags as string[]) : [],
       content: r.content,
-      metadata: r.metadata ?? undefined,
+      metadata: asRecord(r.metadata),
       createdAt: new Date(r.created_at).toISOString(),
       updatedAt: new Date(r.updated_at).toISOString(),
     }));
@@ -187,7 +191,7 @@ export async function getEntryById_pg(id: string): Promise<Entry | null> {
     title: r.title ?? undefined,
     tags: Array.isArray(r.tags) ? (r.tags as string[]) : [],
     content: r.content,
-    metadata: r.metadata ?? undefined,
+    metadata: asRecord(r.metadata),
     createdAt: new Date(r.created_at).toISOString(),
     updatedAt: new Date(r.updated_at).toISOString(),
   };
