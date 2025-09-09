@@ -5,10 +5,14 @@ import { getAuthUrl } from "@/lib/google-oauth";
 
 export const runtime = "nodejs";
 
+// Full-access scopes (requires re-consent):
+// - Gmail: full access via https://mail.google.com/
+// - Drive: full access via https://www.googleapis.com/auth/drive
+// - Calendar: full access via https://www.googleapis.com/auth/calendar
 const SCOPES = [
-  "https://www.googleapis.com/auth/gmail.readonly",
-  "https://www.googleapis.com/auth/calendar.readonly",
-  "https://www.googleapis.com/auth/drive.metadata.readonly",
+  "https://mail.google.com/",
+  "https://www.googleapis.com/auth/drive",
+  "https://www.googleapis.com/auth/calendar",
 ];
 
 export async function GET() {
@@ -21,4 +25,3 @@ export async function GET() {
     return NextResponse.json({ error: msg }, { status: 500 });
   }
 }
-
