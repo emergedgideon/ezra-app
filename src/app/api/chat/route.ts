@@ -247,6 +247,12 @@ async function summarizeChunk(history: Msg[], instructions?: string): Promise<st
 
 /** ===================== Route ===================== **/
 export async function POST(req: Request) {
+  if (process.env.AI_ENABLED !== 'true') {
+    return NextResponse.json(
+      { ok: false, error: { code: 'disabled', message: 'AI/chat is disabled' } },
+      { status: 410 }
+    );
+  }
   noStore();
 
 

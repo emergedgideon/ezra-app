@@ -7,6 +7,12 @@ import { randomUUID } from "crypto";
 export const runtime = "nodejs";
 
 export async function GET() {
+  if (process.env.AI_ENABLED !== 'true') {
+    return NextResponse.json(
+      { ok: false, error: { code: 'disabled', message: 'AI/chat is disabled' } },
+      { status: 410 }
+    );
+  }
   const sid = await getOrCreateSession();
   const { rows } = await sql<{
     id: string;
@@ -23,6 +29,12 @@ export async function GET() {
 }
 
 export async function POST(req: Request) {
+  if (process.env.AI_ENABLED !== 'true') {
+    return NextResponse.json(
+      { ok: false, error: { code: 'disabled', message: 'AI/chat is disabled' } },
+      { status: 410 }
+    );
+  }
   const sid = await getOrCreateSession();
   const body = (await req.json().catch(() => ({}))) as {
     role?: string;

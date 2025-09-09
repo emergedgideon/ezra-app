@@ -7,6 +7,12 @@ export const runtime = "nodejs";
 // request body shape (inline-validated below)
 
 export async function POST(req: Request) {
+  if (process.env.AI_ENABLED !== 'true') {
+    return NextResponse.json(
+      { ok: false, error: { code: 'disabled', message: 'TTS is disabled' } },
+      { status: 410 }
+    );
+  }
   try {
     const bodyUnknown: unknown = await req.json().catch(() => ({}));
     const body = (typeof bodyUnknown === "object" && bodyUnknown) ? (bodyUnknown as Record<string, unknown>) : {};

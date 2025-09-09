@@ -69,10 +69,22 @@ function inQuietHours(hour: number): boolean {
 }
 
 export async function GET(req: Request) {
+  if (process.env.AI_ENABLED !== 'true') {
+    return NextResponse.json(
+      { ok: false, error: { code: 'disabled', message: 'AI/GPT compose is disabled' } },
+      { status: 410 }
+    );
+  }
   return POST(req);
 }
 
 export async function POST(req: Request) {
+  if (process.env.AI_ENABLED !== 'true') {
+    return NextResponse.json(
+      { ok: false, error: { code: 'disabled', message: 'AI/GPT compose is disabled' } },
+      { status: 410 }
+    );
+  }
   try {
     const url = new URL(req.url);
     const dry = url.searchParams.get("dry") === "1";

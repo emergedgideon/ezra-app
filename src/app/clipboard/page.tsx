@@ -32,7 +32,7 @@ export default function ClipboardPage() {
       <section style={styles.panel}>
         <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
           <div style={{ opacity: 0.8 }}>Newest first</div>
-          <Link href="/" style={styles.btn}>Chat</Link>
+          <Link href="/" style={styles.btn}>Home</Link>
         </div>
         <small style={{ opacity: 0.8 }}>{status}</small>
       </section>

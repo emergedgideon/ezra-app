@@ -5,6 +5,12 @@ import { openai } from "@/lib/openai";
 export const runtime = "nodejs";
 
 export async function POST(req: Request) {
+  if (process.env.AI_ENABLED !== 'true') {
+    return NextResponse.json(
+      { ok: false, error: { code: 'disabled', message: 'Transcription is disabled' } },
+      { status: 410 }
+    );
+  }
   try {
     const form = await req.formData();
     const audio = form.get("audio");
@@ -28,4 +34,3 @@ export async function POST(req: Request) {
     return NextResponse.json({ error: msg }, { status: 500 });
   }
 }
-

@@ -39,6 +39,12 @@ async function generateSummary(history: DbMsg[]): Promise<string> {
 }
 
 export async function POST() {
+  if (process.env.AI_ENABLED !== 'true') {
+    return NextResponse.json(
+      { ok: false, error: { code: 'disabled', message: 'AI/chat is disabled' } },
+      { status: 410 }
+    );
+  }
   const sid = await getOrCreateSession();
 
   // Load full history for this session

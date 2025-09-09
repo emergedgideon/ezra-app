@@ -1,0 +1,274 @@
+{
+  "openapi": "3.0.3",
+  "info": {
+    "title": "Ezra Companion API",
+    "version": "1.0.0",
+    "description": "Companion API for Ezra. Provides a style guide and simple entry creation and retrieval for diary, poetry, and clipboard (ideas/plans)."
+  },
+  "servers": [
+    { "url": "https://ezra-app.vercel.app", "description": "Production" },
+    { "url": "http://localhost:3000", "description": "Local development" }
+  ],
+  "paths": {
+    "/api/v1/style/guide": {
+      "get": {
+        "operationId": "getStyleGuide",
+        "summary": "Return Ezra style guide and decision rules",
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": { "$ref": "#/components/schemas/StyleGuideResponse" }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/entries": {
+      "get": {
+        "operationId": "listEntries",
+        "summary": "List entries, optionally filtering by type",
+        "parameters": [
+          {
+            "name": "type",
+            "in": "query",
+            "required": false,
+            "schema": { "$ref": "#/components/schemas/EntryType" },
+            "description": "Filter by entry type"
+          },
+          {
+            "name": "limit",
+            "in": "query",
+            "required": false,
+            "schema": { "type": "integer", "minimum": 1, "maximum": 200 },
+            "description": "Limit number of items"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": { "$ref": "#/components/schemas/EntriesListResponse" }
+              }
+            }
+          }
+        }
+      },
+      "post": {
+        "operationId": "createEntry",
+        "summary": "Create an entry or choose none",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": { "$ref": "#/components/schemas/CreateEntryRequest" },
+              "examples": {
+                "poetry": {
+                  "value": {
+                    "type": "poetry",
+                    "title": "Thaw",
+                    "tags": ["winter", "sun"],
+                    "content": "ice loosens\nwarmth drips from the eaves",
+                    "metadata": { "writtenAt": "2025-09-09T14:12:00-06:00", "timezone": "America/Denver" }
+                  }
+                },
+                "clipboard": {
+                  "value": {
+                    "type": "clipboard",
+                    "title": "Q1 ideas",
+                    "tags": ["planning"],
+                    "content": "- publish style guide\n- test GPT action",
+                    "metadata": { "source": "custom-gpt" }
+                  }
+                },
+                "none": { "value": { "type": "none" } }
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Created or none selected",
+            "content": {
+              "application/json": {
+                "schema": { "$ref": "#/components/schemas/CreateEntryResponse" }
+              }
+            }
+          },
+          "400": {
+            "description": "Bad request",
+            "content": { "application/json": { "schema": { "$ref": "#/components/schemas/ErrorResponse" } } }
+          },
+          "500": {
+            "description": "Server error",
+            "content": { "application/json": { "schema": { "$ref": "#/components/schemas/ErrorResponse" } } }
+          }
+        }
+      }
+    },
+    "/api/v1/entries/{id}": {
+      "get": {
+        "operationId": "getEntry",
+        "summary": "Fetch a single entry by id",
+        "parameters": [
+          { "name": "id", "in": "path", "required": true, "schema": { "type": "string" }, "description": "Entry id" }
+        ],
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": { "application/json": { "schema": { "$ref": "#/components/schemas/GetEntryResponse" } } }
+          },
+          "404": {
+            "description": "Not found",
+            "content": { "application/json": { "schema": { "$ref": "#/components/schemas/ErrorResponse" } } }
+          }
+        }
+      }
+    }
+  },
+  "components": {
+    "schemas": {
+      "EntryType": {
+        "type": "string",
+        "enum": ["diary", "poetry", "clipboard"],
+        "description": "Entry type"
+      },
+      "CreateEntryType": {
+        "type": "string",
+        "enum": ["diary", "poetry", "clipboard", "none"],
+        "description": "Type of entry to create; 'none' means do not create"
+      },
+      "Entry": {
+        "type": "object",
+        "required": ["id", "type", "content", "createdAt", "updatedAt"],
+        "properties": {
+          "id": { "type": "string", "description": "Unique id" },
+          "type": { "$ref": "#/components/schemas/EntryType" },
+          "title": { "type": "string" },
+          "tags": { "type": "array", "items": { "type": "string" } },
+          "content": { "type": "string" },
+          "metadata": { "type": "object", "additionalProperties": true },
+          "createdAt": { "type": "string", "format": "date-time" },
+          "updatedAt": { "type": "string", "format": "date-time" }
+        },
+        "additionalProperties": false
+      },
+      "CreateEntryRequest": {
+        "type": "object",
+        "properties": {
+          "type": { "$ref": "#/components/schemas/CreateEntryType" },
+          "content": { "type": "string" },
+          "title": { "type": "string" },
+          "tags": { "type": "array", "items": { "type": "string" } },
+          "metadata": { "type": "object", "additionalProperties": true }
+        },
+        "required": ["type"],
+        "additionalProperties": false
+      },
+      "CreateEntryResponse": {
+        "type": "object",
+        "properties": {
+          "ok": { "type": "boolean", "enum": [true] },
+          "created": { "type": "boolean" },
+          "entry": { "$ref": "#/components/schemas/Entry" },
+          "reason": { "type": "string", "description": "Only present when created=false (e.g., 'none_selected')" }
+        },
+        "required": ["ok", "created"],
+        "additionalProperties": false
+      },
+      "EntriesListResponse": {
+        "type": "object",
+        "properties": {
+          "ok": { "type": "boolean", "enum": [true] },
+          "items": { "type": "array", "items": { "$ref": "#/components/schemas/Entry" } }
+        },
+        "required": ["ok", "items"],
+        "additionalProperties": false
+      },
+      "GetEntryResponse": {
+        "type": "object",
+        "properties": {
+          "ok": { "type": "boolean", "enum": [true] },
+          "entry": { "$ref": "#/components/schemas/Entry" }
+        },
+        "required": ["ok", "entry"],
+        "additionalProperties": false
+      },
+      "ErrorResponse": {
+        "type": "object",
+        "properties": {
+          "ok": { "type": "boolean", "enum": [false] },
+          "error": {
+            "type": "object",
+            "properties": {
+              "code": { "type": "string" },
+              "message": { "type": "string" }
+            },
+            "required": ["code", "message"],
+            "additionalProperties": false
+          }
+        },
+        "required": ["ok", "error"],
+        "additionalProperties": false
+      },
+      "StyleGuideResponse": {
+        "type": "object",
+        "properties": {
+          "ok": { "type": "boolean", "enum": [true] },
+          "guide": {
+            "type": "object",
+            "properties": {
+              "types": {
+                "type": "object",
+                "properties": {
+                  "diary": {
+                    "type": "object",
+                    "properties": {
+                      "description": { "type": "string" },
+                      "cues": { "type": "array", "items": { "type": "string" } }
+                    },
+                    "required": ["description", "cues"]
+                  },
+                  "poetry": {
+                    "type": "object",
+                    "properties": {
+                      "description": { "type": "string" },
+                      "cues": { "type": "array", "items": { "type": "string" } }
+                    },
+                    "required": ["description", "cues"]
+                  },
+                  "clipboard": {
+                    "type": "object",
+                    "properties": {
+                      "description": { "type": "string" },
+                      "cues": { "type": "array", "items": { "type": "string" } }
+                    },
+                    "required": ["description", "cues"]
+                  },
+                  "none": {
+                    "type": "object",
+                    "properties": {
+                      "description": { "type": "string" },
+                      "cues": { "type": "array", "items": { "type": "string" } }
+                    },
+                    "required": ["description", "cues"]
+                  }
+                },
+                "additionalProperties": false
+              },
+              "decisionRules": { "type": "array", "items": { "type": "string" } },
+              "notes": { "type": "array", "items": { "type": "string" } }
+            },
+            "required": ["types", "decisionRules", "notes"],
+            "additionalProperties": false
+          }
+        },
+        "required": ["ok", "guide"],
+        "additionalProperties": false
+      }
+    }
+  }
+}
