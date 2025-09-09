@@ -4,9 +4,10 @@ import { getEntryById } from "@/lib/entries";
 
 export const runtime = "nodejs";
 
-export async function GET(_req: Request, ctx: { params: { id: string } }) {
+export async function GET(_req: Request, ctx: { params: Promise<{ id: string }> }) {
   try {
-    const id = String(ctx.params?.id || "").trim();
+    const { id: rawId } = await ctx.params;
+    const id = String(rawId || "").trim();
     if (!id) return NextResponse.json({ ok: false, error: { code: "bad_id", message: "id is required" } }, { status: 400 });
     const entry = await getEntryById(id);
     if (!entry) return NextResponse.json({ ok: false, error: { code: "not_found", message: "entry not found" } }, { status: 404 });
@@ -16,4 +17,3 @@ export async function GET(_req: Request, ctx: { params: { id: string } }) {
     return NextResponse.json({ ok: false, error: { code: "server_error", message: msg } }, { status: 500 });
   }
 }
-
