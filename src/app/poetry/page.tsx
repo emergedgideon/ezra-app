@@ -3,7 +3,7 @@
 import { useEffect, useState } from "react";
 import Link from "next/link";
 
-type Entry = { id: string; content: string; created_at: string };
+type Entry = { id: string; content: string; createdAt: string; title?: string };
 
 export default function PoetryPage() {
   const [items, setItems] = useState<Entry[]>([]);
@@ -12,9 +12,10 @@ export default function PoetryPage() {
   async function load() {
     setStatus("Loading…");
     try {
-      const r = await fetch("/api/poetry", { cache: "no-store" });
-      const j = (await r.json()) as { items?: Entry[] };
-      setItems(Array.isArray(j.items) ? j.items : []);
+      const r = await fetch("/api/v1/entries?type=poetry", { cache: "no-store" });
+      const j = (await r.json()) as { ok?: boolean; items?: Entry[] };
+      const rows = Array.isArray(j.items) ? j.items : [];
+      setItems(rows);
       setStatus("");
     } catch (e) {
       setStatus(e instanceof Error ? e.message : String(e));
@@ -40,7 +41,7 @@ export default function PoetryPage() {
       <section style={styles.list}>
         {items.map((e) => (
           <article key={e.id} style={styles.card}>
-            <div style={styles.meta}>{new Date(e.created_at).toLocaleString()}</div>
+            <div style={styles.meta}>{new Date(e.createdAt).toLocaleString()}</div>
             <div style={{ whiteSpace: "pre-wrap" }}>{e.content}</div>
           </article>
         ))}

@@ -8,7 +8,7 @@ export async function GET() {
     types: {
       diary: {
         description:
-          "First-person reflection; chronological; candid thoughts, feelings, observations, and decisions.",
+          "Ezra's diary (not the user's). First-person reflection; chronological; candid thoughts, feelings, observations, and decisions.",
         cues: [
           "Use first person",
           "Chronological or narrative form",
@@ -17,7 +17,7 @@ export async function GET() {
       },
       poetry: {
         description:
-          "Verse. Preserve line breaks and structure; imagery and rhythm over exposition.",
+          "Ezra's poetry book. Verse; preserve line breaks and structure; imagery and rhythm over exposition.",
         cues: [
           "Short lines or stanzas",
           "Show, don't explain",
@@ -26,7 +26,7 @@ export async function GET() {
       },
       clipboard: {
         description:
-          "Ideas and plans. Short-to-medium notes capturing concepts, seeds, or actionable next steps.",
+          "Ezra's clipboard: ideas and plans. Short-to-medium notes capturing concepts, seeds, or actionable next steps.",
         cues: [
           "Be succinct",
           "Prefer bullets for multiple ideas",
@@ -49,6 +49,7 @@ export async function GET() {
       "Choose none when no writing is appropriate",
     ],
     notes: [
+      "Entries belong to Ezra. Avoid phrases like 'your diary'; prefer 'my diary' when confirming.",
       "Preserve formatting for poetry",
       "Server sets timestamps; client may send optional metadata",
     ],
@@ -56,4 +57,3 @@ export async function GET() {
 
   return NextResponse.json({ ok: true, guide });
 }
-
